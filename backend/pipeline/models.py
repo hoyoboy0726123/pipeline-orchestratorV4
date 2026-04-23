@@ -23,7 +23,7 @@ Pipeline YAML 設定模型。
 """
 from typing import Optional
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class StepOutput(BaseModel):
@@ -53,8 +53,13 @@ class ComputerUseAction(BaseModel):
       - assert_image：驗證某錨點圖「當下」必須可見，否則步驟失敗（短 timeout）
       - assert_text：OCR 驗證螢幕上必須有某段文字，否則步驟失敗
       - activate_window：把指定標題的視窗切到前景（解決錄製回放時視窗不在前的常見問題）
+      - if_image_found：條件分支 — 找到 image 就跑 then: 動作清單，否則跑 else:
+      - retry_until：重複跑 do: 清單直到 until: 動作成功（處理按鈕要按多次、網路抖動等）
     """
-    type: str  # click_image | click_at | type_text | hotkey | wait | wait_image | screenshot | scroll | drag | assert_image | assert_text | activate_window
+    # YAML 會用 else: 這個 Python 保留字當 key，靠 pydantic alias 接回 Python 端的 else_
+    model_config = ConfigDict(populate_by_name=True)
+
+    type: str  # click_image | click_at | type_text | hotkey | wait | wait_image | screenshot | scroll | drag | assert_image | assert_text | activate_window | if_image_found | retry_until
     image: str = ""       # 主錨點圖檔名（相對 assets_dir）
     image2: str = ""      # 次錨點圖檔名（多錨點驗證用，選填）
     dx2: int = 0          # 次錨點相對點擊點的位移 x
@@ -98,6 +103,16 @@ class ComputerUseAction(BaseModel):
     #   1. 目標區域大、半徑 400 不夠；2. 有多個相似 UI 元素要精準定位；3. 加速（更小區域 = 更快）
     # click_image / wait_image / assert_image 都支援
     search_region: list[int] = []
+    # ── 控制流巢狀動作（if_image_found / retry_until 用）─────────
+    # 這些欄位刻意保留為 list[dict] / Optional[dict]，不做遞迴 pydantic 模型驗證，
+    # 因為 execute_action 接收的是 dict；巢狀動作在執行時才逐一 .get() 讀取並驗證。
+    # 優點：避免 pydantic 自我遞迴引用的 model_rebuild 麻煩；YAML 原始結構直通。
+    then: list[dict] = []                       # if_image_found：找到時跑的子動作清單
+    else_: list[dict] = Field(default_factory=list, alias="else")  # 找不到時跑的子動作清單
+    do: list[dict] = []                          # retry_until：要反覆執行的動作清單
+    until: Optional[dict] = None                 # retry_until：檢查條件（wait_image / assert_image / assert_text 之一）
+    max_attempts: int = 3                        # retry_until：最多試幾輪
+    wait_between_sec: float = 1.0                # retry_until：每輪之間等待秒數
 
 
 class PipelineStep(BaseModel):
