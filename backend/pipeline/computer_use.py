@@ -790,15 +790,27 @@ def execute_action(
 
             # 使用者明確指定的搜尋紅框（優先於錄製座標附近搜尋）
             region_rect = _parse_search_region(action)
+            cv_strict = bool(action.get("cv_strict_region", False))
 
-            def _search(nx_: Optional[int], ny_: Optional[int]) -> MatchResult:
+            def _search(nx_: Optional[int], ny_: Optional[int],
+                        force_region: Optional[tuple[int, int, int, int]] = "use_outer") -> MatchResult:
                 """先跑 gray 模式，若 conf < threshold 再跑 edge 模式，取較高 conf。
                 edge 對 hover fade / 主題色差異更容忍，代價 +20ms。
-                搜尋區域優先序：region_rect > near_xy + radius > 全螢幕。"""
+
+                force_region:
+                  "use_outer"（預設）→ 用外層 region_rect（紅框）
+                  None              → 強制忽略 region_rect，用 nx_/ny_ 或全螢幕
+                  tuple             → 強制用這個 region
+                """
+                if force_region == "use_outer":
+                    use_region = region_rect
+                else:
+                    use_region = force_region
+
                 def _find(m: str) -> MatchResult:
-                    if region_rect is not None:
+                    if use_region is not None:
                         return find_template(str(tpl_path), threshold=threshold, multi_scale=True,
-                                             region=region_rect, mode=m)
+                                             region=use_region, mode=m)
                     if nx_ is not None and ny_ is not None:
                         return find_template(str(tpl_path), threshold=threshold, multi_scale=True,
                                              near_xy=(nx_, ny_), search_radius=cv_search_radius, mode=m)
@@ -816,17 +828,26 @@ def execute_action(
                 return gray
 
             if has_coord:
+                # Phase 1：紅框內找（如果 region_rect 設了），或近錄製座標找
                 m = MatchResult(False)
                 for _attempt in range(_SETTLE_RETRIES):
                     m = _search(int(fx), int(fy))
                     if m.found:
                         break
                     if _attempt + 1 < _SETTLE_RETRIES:
-                        logger.info(f"[computer_use]   附近首次比對 conf={m.confidence:.2f} < {threshold}，等 {_SETTLE_WAIT_MS}ms 讓動畫穩定後 retry")
+                        logger.info(f"[computer_use]   首次比對 conf={m.confidence:.2f} < {threshold}，等 {_SETTLE_WAIT_MS}ms 讓動畫穩定後 retry")
                         time.sleep(_SETTLE_WAIT_MS / 1000.0)
-                if not m.found and not cv_search_only_near:
+                # Phase 2：紅框 miss、不嚴格 → 退回錄製座標附近 ±cv_search_radius 找
+                if not m.found and region_rect is not None and not cv_strict:
+                    logger.info(f"[computer_use]   紅框內找不到 → 退回錄製座標附近 ±{cv_search_radius}px 重試")
+                    m = _search(int(fx), int(fy), force_region=None)
+                # Phase 3：附近 miss、不嚴格、未鎖定附近 → 擴大全螢幕
+                if not m.found and not cv_search_only_near and not cv_strict:
                     logger.info(f"[computer_use]   附近 ±{cv_search_radius}px 找不到（best={m.confidence:.2f}），擴大到整個桌面")
-                    m = _search(None, None)
+                    m = _search(None, None, force_region=None)
+                # 嚴格模式 + 紅框 miss：明確標示原因
+                if not m.found and cv_strict and region_rect is not None:
+                    m.reason = f"嚴格鎖定範圍：紅框內找不到 {img_name}（{m.reason}）"
             else:
                 m = _search(None, None)
 
@@ -841,6 +862,11 @@ def execute_action(
                 off_tag = f" off=({off_x},{off_y})" if (off_x or off_y) else ""
                 msg = f"{mods_tag} 點擊 {img_name} @ ({click_x},{click_y}) (conf={m.confidence:.2f} [{m.mode}], scale={m.scale}){off_tag}{hold_tag}"
             else:
+                # 嚴格鎖定範圍：紅框 miss 時連座標 fallback 都禁掉
+                if cv_strict and region_rect is not None:
+                    fail_msg = m.reason
+                    logger.error(f"[computer_use]   ✗ {fail_msg}")
+                    return ActionResult(False, index, atype, fail_msg)
                 # Fallback 判斷（三個條件皆需 True 才退回座標）：
                 #   1. 有錄製座標 (has_coord)
                 #   2. allow_coord_fallback：系統層級信心（螢幕解析度跟錄製時相同）

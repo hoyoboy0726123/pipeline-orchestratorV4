@@ -109,6 +109,9 @@ class ComputerUseAction(BaseModel):
     #   1. 目標區域大、半徑 400 不夠；2. 有多個相似 UI 元素要精準定位；3. 加速（更小區域 = 更快）
     # click_image / wait_image / assert_image 都支援
     search_region: list[int] = []
+    # CV 嚴格鎖定範圍：True = 紅框內找不到立即 fail（不退附近、不退全螢幕、不退錄製座標）
+    # 用於「目標必須在固定區域才合法」的場景；預設 False = 寬容三階段 fallback
+    cv_strict_region: bool = False
     # ── 控制流巢狀動作（if_image_found / retry_until 用）─────────
     # 這些欄位刻意保留為 list[dict] / Optional[dict]，不做遞迴 pydantic 模型驗證，
     # 因為 execute_action 接收的是 dict；巢狀動作在執行時才逐一 .get() 讀取並驗證。

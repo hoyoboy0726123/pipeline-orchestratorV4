@@ -27,8 +27,8 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
   const fullLeft = action.full_left || 0
   const fullTop = action.full_top || 0
 
-  // 編輯模式：anchor = 綠框錨點 / ocr = 藍框 OCR 搜尋範圍
-  const [editMode, setEditMode] = useState<'anchor' | 'ocr'>('anchor')
+  // 編輯模式：anchor = 綠框錨點 / cv_region = 紅框 CV 搜尋範圍 / ocr = 藍框 OCR 搜尋範圍
+  const [editMode, setEditMode] = useState<'anchor' | 'cv_region' | 'ocr'>('anchor')
 
   // 點擊位置（虛擬桌面絕對座標；可拖曳紅十字調整）
   const [clickPos, setClickPos] = useState(() => ({
@@ -47,7 +47,7 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
   // 藍框：OCR 搜尋範圍（虛擬桌面絕對座標）
   // 有存 ocr_box_* 就用存的；沒存就以點擊位置為中心、半徑用 searchRadius（預設 400）
   // 嚴格鎖定範圍：true = 框內找不到立即 fail，跳過附近/全螢幕 fallback
-  const [strictRegion, setStrictRegion] = useState<boolean>(action.ocr_strict_region === true)
+  const [ocrStrictRegion, setOcrStrictRegion] = useState<boolean>(action.ocr_strict_region === true)
   const [ocrBox, setOcrBox] = useState(() => {
     const hasSaved = (action.ocr_box_width || 0) > 0 && (action.ocr_box_height || 0) > 0
     if (hasSaved) {
@@ -57,6 +57,23 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
         width: action.ocr_box_width || 0,
         height: action.ocr_box_height || 0,
       }
+    }
+    const r = searchRadius
+    return {
+      left: (action.x || 0) - r,
+      top: (action.y || 0) - r,
+      width: r * 2,
+      height: r * 2,
+    }
+  })
+
+  // 紅框：CV 搜尋範圍（虛擬桌面絕對座標，存在 action.search_region = [l,t,w,h]）
+  // 有存就用存的；沒存就跟 OCR 一樣用 searchRadius 圓圈外接矩形當預設
+  const [cvStrictRegion, setCvStrictRegion] = useState<boolean>(action.cv_strict_region === true)
+  const [cvBox, setCvBox] = useState(() => {
+    const sr = action.search_region
+    if (Array.isArray(sr) && sr.length === 4 && sr[2] > 0 && sr[3] > 0) {
+      return { left: sr[0], top: sr[1], width: sr[2], height: sr[3] }
     }
     const r = searchRadius
     return {
@@ -209,10 +226,10 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
     // drawImage 的 source 從 viewRect 取；destination 填整個 canvas
     ctx.drawImage(img, viewRect.x, viewRect.y, viewRect.w, viewRect.h, 0, 0, dispW, dispH)
 
-    // CV 模式：畫出搜尋範圍（錄製座標 ±cv_search_radius）讓使用者直觀看到
+    // CV 錨點模式：畫出步驟層級的預設搜尋範圍（錄製座標 ±cv_search_radius）讓使用者直觀看到
     //   - 實線框 = CV 第一階段只在這裡找錨點
     //   - 找不到會擴到全螢幕（cv_search_only_near=false 的預設情況下）
-    //   - 畫在錨點框「之前」，這樣錨點框疊在上層不會被遮
+    //   - cv_region 模式不畫（紅框本身就是 per-action 的 CV 搜尋範圍）
     if (editMode === 'anchor') {
       const { cx: rcx, cy: rcy } = worldToCanvas(clickPos.x, clickPos.y)
       const rPx = searchRadius * displayScale
@@ -247,15 +264,20 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
     ctx.lineWidth = 1.5
     ctx.stroke()
 
-    // 啟用中的框（綠框 = 錨點 / 藍框 = OCR 搜尋範圍）
-    const activeBox = editMode === 'ocr' ? ocrBox : box
-    const activeColor = editMode === 'ocr' ? '#3b82f6' : '#10b981'
+    // 啟用中的框（綠框 = 錨點 / 紅框 = CV 搜尋範圍 / 藍框 = OCR 搜尋範圍）
+    const activeBox = editMode === 'ocr' ? ocrBox : (editMode === 'cv_region' ? cvBox : box)
+    const activeColor = editMode === 'ocr' ? '#3b82f6'
+                       : editMode === 'cv_region' ? '#dc2626'   // 紅
+                       : '#10b981'                              // 綠
     const { cx: bx, cy: by } = worldToCanvas(activeBox.left, activeBox.top)
     const bw = activeBox.width * displayScale
     const bh = activeBox.height * displayScale
-    // OCR 模式下畫半透明填色，讓「搜尋範圍」的視覺印象更直觀
+    // OCR / CV 範圍模式畫半透明填色，讓「搜尋範圍」的視覺印象更直觀
     if (editMode === 'ocr') {
       ctx.fillStyle = 'rgba(59, 130, 246, 0.12)'
+      ctx.fillRect(bx, by, bw, bh)
+    } else if (editMode === 'cv_region') {
+      ctx.fillStyle = 'rgba(220, 38, 38, 0.10)'
       ctx.fillRect(bx, by, bw, bh)
     }
     ctx.strokeStyle = activeColor
@@ -268,7 +290,7 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
     const hs = 8
     ctx.fillRect(bx - hs / 2, by - hs / 2, hs, hs)                   // 左上
     ctx.fillRect(bx + bw - hs / 2, by + bh - hs / 2, hs, hs)         // 右下
-  }, [imgLoaded, displayScale, box, ocrBox, editMode, clickPos.x, clickPos.y, fullLeft, fullTop, viewRect.x, viewRect.y, viewRect.w, viewRect.h, searchRadius])
+  }, [imgLoaded, displayScale, box, ocrBox, cvBox, editMode, clickPos.x, clickPos.y, fullLeft, fullTop, viewRect.x, viewRect.y, viewRect.w, viewRect.h, searchRadius])
 
   // 更新右側預覽（錨點：原尺寸裁切；OCR：寬度壓到 ≤320px 節省記憶體，僅用於預覽）
   const [ocrPreview, setOcrPreview] = useState<string>('')
@@ -333,7 +355,7 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
     // 紅十字優先判斷（在框內但靠近紅十字時優先拖紅十字）
     const { cx: crossX, cy: crossY } = worldToCanvas(clickPos.x, clickPos.y)
     const nearCross = Math.abs(cx - crossX) < 12 && Math.abs(cy - crossY) < 12
-    const activeBox = editMode === 'ocr' ? ocrBox : box
+    const activeBox = editMode === 'ocr' ? ocrBox : (editMode === 'cv_region' ? cvBox : box)
     const { cx: bx, cy: by } = worldToCanvas(activeBox.left, activeBox.top)
     const bw = activeBox.width * displayScale
     const bh = activeBox.height * displayScale
@@ -369,7 +391,7 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
       })
       return
     }
-    const setter = editMode === 'ocr' ? setOcrBox : setBox
+    const setter = editMode === 'ocr' ? setOcrBox : (editMode === 'cv_region' ? setCvBox : setBox)
     if (dragMode === 'move') {
       setter(b => ({ ...b, left: dragRef.current.boxLeft + Math.round(dx), top: dragRef.current.boxTop + Math.round(dy) }))
     } else if (dragMode === 'resize-br') {
@@ -391,8 +413,9 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
   const onMouseUp = () => setDragMode('none')
 
   // 確認：依 mode 不同走不同路徑
-  //   anchor → 呼叫後端裁錨點 PNG、更新 image+offset
-  //   ocr    → 純前端存 ocr_box_* 座標、自動啟用 use_ocr
+  //   anchor    → 呼叫後端裁錨點 PNG、更新 image+offset
+  //   cv_region → 純前端存 search_region [l,t,w,h] + cv_strict_region 旗標
+  //   ocr       → 純前端存 ocr_box_* 座標、自動啟用 use_ocr
   const handleConfirm = async () => {
     if (editMode === 'ocr') {
       onApply({
@@ -400,11 +423,20 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
         ocr_box_top: ocrBox.top,
         ocr_box_width: ocrBox.width,
         ocr_box_height: ocrBox.height,
-        ocr_strict_region: strictRegion,
+        ocr_strict_region: ocrStrictRegion,
         // 套用藍框 = 明確想走 OCR；自動勾 use_ocr，避免使用者忘記勾 checkbox
         use_ocr: true,
       } as any)
-      toast.success(`OCR 搜尋範圍已更新（${ocrBox.width}×${ocrBox.height}${strictRegion ? '・嚴格鎖定' : ''}）`)
+      toast.success(`OCR 搜尋範圍已更新（${ocrBox.width}×${ocrBox.height}${ocrStrictRegion ? '・嚴格鎖定' : ''}）`)
+      onClose()
+      return
+    }
+    if (editMode === 'cv_region') {
+      onApply({
+        search_region: [cvBox.left, cvBox.top, cvBox.width, cvBox.height],
+        cv_strict_region: cvStrictRegion,
+      } as any)
+      toast.success(`CV 搜尋範圍已更新（${cvBox.width}×${cvBox.height}${cvStrictRegion ? '・嚴格鎖定' : ''}）`)
       onClose()
       return
     }
@@ -445,6 +477,9 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
     if (editMode === 'ocr') {
       const r = searchRadius
       setOcrBox({ left: clickPos.x - r, top: clickPos.y - r, width: r * 2, height: r * 2 })
+    } else if (editMode === 'cv_region') {
+      const r = searchRadius
+      setCvBox({ left: clickPos.x - r, top: clickPos.y - r, width: r * 2, height: r * 2 })
     } else {
       setBox({ left: clickPos.x - 120, top: clickPos.y - 40, width: 240, height: 80 })
     }
@@ -513,7 +548,7 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-100">
           <h3 className="font-semibold text-gray-800">✏️ 編輯錨點 — 動作 #{actionIndex + 1}</h3>
-          {/* 模式切換：綠框錨點 ↔ 藍框 OCR 範圍 */}
+          {/* 模式切換：綠框錨點 / 紅框 CV 搜尋範圍 / 藍框 OCR 範圍 */}
           <div className="flex items-center gap-0 ml-4 border border-gray-200 rounded-lg overflow-hidden text-xs">
             <button
               onClick={() => setEditMode('anchor')}
@@ -523,6 +558,14 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
                   : 'bg-white text-gray-600 hover:bg-gray-50'
               }`}
             >🟩 CV 錨點</button>
+            <button
+              onClick={() => setEditMode('cv_region')}
+              className={`px-3 py-1.5 transition-colors ${
+                editMode === 'cv_region'
+                  ? 'bg-red-500 text-white font-semibold'
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >🔴 CV 範圍</button>
             <button
               onClick={() => setEditMode('ocr')}
               className={`px-3 py-1.5 transition-colors ${
@@ -582,7 +625,83 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
 
           {/* 右側：預覽 + 控制 */}
           <div className="w-72 border-l border-gray-200 flex flex-col p-4 space-y-3 overflow-y-auto">
-            {editMode === 'anchor' ? (
+            {editMode === 'cv_region' ? (
+              <>
+                <div>
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">🔴 CV 搜尋範圍（紅框）</div>
+                  <div className="text-xs text-gray-500 mt-1 font-mono">
+                    {cvBox.width} × {cvBox.height} px · 面積 {(cvBox.width * cvBox.height).toLocaleString()} px²
+                  </div>
+                  <div className="text-[11px] text-gray-400 mt-0.5 font-mono">
+                    left={cvBox.left} top={cvBox.top}
+                  </div>
+                </div>
+
+                <div className="p-2 bg-gray-50 rounded-lg text-xs text-gray-600 leading-relaxed space-y-1.5">
+                  <div className="font-semibold text-gray-700">🔎 CV 三階段搜尋</div>
+                  {cvStrictRegion ? (
+                    <>
+                      <div className="text-orange-700 font-medium">⛔ 嚴格鎖定模式：只跑 Phase 1，紅框內找不到立即 FAIL</div>
+                      <div className="text-gray-400 line-through">2️⃣ 錄製座標附近（已 skip）</div>
+                      <div className="text-gray-400 line-through">3️⃣ 整個螢幕（已 skip）</div>
+                      <div className="text-gray-400 line-through">退回錄製座標硬點（已 skip）</div>
+                    </>
+                  ) : (
+                    <>
+                      <div>1️⃣ <b>紅框內</b> 找綠框錨點（速度快、避開跨螢幕誤判）</div>
+                      <div>2️⃣ 紅框沒找到 → <b>錄製座標附近 ±cv_search_radius</b> 再試</div>
+                      <div>3️⃣ 還是沒找到 → <b>整個螢幕</b> 最後保險（除非勾「只搜附近」）</div>
+                      <div>✅ 找到 → 點擊位置 = 錨點中心 + 紅十字偏移</div>
+                      <div>❌ 全部失敗 → 看 cv_coord_fallback 決定 FAIL 或退錄製座標</div>
+                      <div className="text-gray-500 pt-1 mt-1 border-t border-gray-200">
+                        👉 紅框沒設 → 跳過 Phase 1，從 Phase 2「附近搜尋」開始（=原本行為）
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* 嚴格鎖定範圍 toggle：跟 OCR 那邊一致的語意 */}
+                <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-colors ${
+                  cvStrictRegion ? 'bg-orange-50 border-orange-300' : 'bg-white border-gray-200 hover:border-orange-300'
+                }`}>
+                  <input
+                    type="checkbox"
+                    checked={cvStrictRegion}
+                    onChange={e => setCvStrictRegion(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-orange-600"
+                  />
+                  <div className="flex-1">
+                    <div className="text-xs font-medium text-gray-800">⛔ 嚴格鎖定範圍（紅框 miss 立即 fail）</div>
+                    <div className="text-[11px] text-gray-600 leading-relaxed mt-0.5">
+                      {cvStrictRegion ? (
+                        <>
+                          <strong className="text-orange-700">已啟用</strong>：只認紅框。Phase 2 附近、Phase 3 全螢幕、cv_coord_fallback 退座標全部 skip。
+                          適合「目標必須在固定區域才合法」的場景
+                        </>
+                      ) : (
+                        <>
+                          預設關。紅框沒命中會擴大到附近 → 全螢幕。多數場景用這個。
+                          要鎖死位置避免誤點才需要勾起來
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </label>
+
+                <div className="p-2 bg-gray-50 rounded-lg text-xs text-gray-600 space-y-1">
+                  <div>🎯 紅十字 = 點擊座標 <span className="text-gray-400">(CV 範圍模式不直接點，由錨點+偏移決定)</span></div>
+                  <div>🔴 紅框 = CV 搜尋範圍（拖中間移動、拖左上/右下角改大小）</div>
+                  <div className="text-gray-500 pt-1 border-t border-gray-200 font-mono">
+                    點擊座標：({clickPos.x}, {clickPos.y})
+                  </div>
+                </div>
+
+                <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800 leading-relaxed">
+                  <strong>💡 紅框 vs 步驟層級 cv_search_radius</strong><br/>
+                  紅框設了 = 此動作專用、覆蓋預設半徑。沒設 = 用步驟預設「錄製座標 ±{searchRadius}px」。
+                </div>
+              </>
+            ) : editMode === 'anchor' ? (
               <>
                 <div>
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">🟩 CV 錨點（綠框）</div>
@@ -651,7 +770,7 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
 
                 <div className="p-2 bg-gray-50 rounded-lg text-xs text-gray-600 leading-relaxed space-y-1.5">
                   <div className="font-semibold text-gray-700">🔤 OCR 三階段搜尋</div>
-                  {strictRegion ? (
+                  {ocrStrictRegion ? (
                     <>
                       <div className="text-orange-700 font-medium">⛔ 嚴格鎖定模式：只跑 Phase 1，框內找不到立即 FAIL</div>
                       <div className="text-gray-400 line-through">2️⃣ 附近 ±400px（已 skip）</div>
@@ -673,18 +792,18 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
 
                 {/* 嚴格鎖定範圍 toggle：適合「目標必須在固定位置才合法」的場景 */}
                 <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-colors ${
-                  strictRegion ? 'bg-orange-50 border-orange-300' : 'bg-white border-gray-200 hover:border-orange-300'
+                  ocrStrictRegion ? 'bg-orange-50 border-orange-300' : 'bg-white border-gray-200 hover:border-orange-300'
                 }`}>
                   <input
                     type="checkbox"
-                    checked={strictRegion}
-                    onChange={e => setStrictRegion(e.target.checked)}
+                    checked={ocrStrictRegion}
+                    onChange={e => setOcrStrictRegion(e.target.checked)}
                     className="mt-0.5 w-4 h-4 accent-orange-600"
                   />
                   <div className="flex-1">
                     <div className="text-xs font-medium text-gray-800">⛔ 嚴格鎖定範圍（找不到立即 fail）</div>
                     <div className="text-[11px] text-gray-600 leading-relaxed mt-0.5">
-                      {strictRegion ? (
+                      {ocrStrictRegion ? (
                         <>
                           <strong className="text-orange-700">已啟用</strong>：只認框內。Phase 2 附近、Phase 3 全螢幕、CV fallback 全部 skip。
                           適合「目標必須在固定位置才合法」（例：通知必須在右下角、不能誤點其他地方同名元素）
@@ -720,12 +839,16 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
               <RotateCcw className="w-3.5 h-3.5" />
               {editMode === 'ocr'
                 ? `重置（以點擊點為中心 ${searchRadius * 2}×${searchRadius * 2}）`
-                : '重置（以點擊點為中心 240×80）'}
+                : editMode === 'cv_region'
+                  ? `重置（以點擊點為中心 ${searchRadius * 2}×${searchRadius * 2}）`
+                  : '重置（以點擊點為中心 240×80）'}
             </button>
 
             <button onClick={handleConfirm}
               className={`flex items-center justify-center gap-1.5 px-3 py-2 text-white rounded-lg text-sm font-medium ${
-                editMode === 'ocr' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'
+                editMode === 'ocr' ? 'bg-blue-600 hover:bg-blue-700'
+                : editMode === 'cv_region' ? 'bg-red-600 hover:bg-red-700'
+                : 'bg-purple-600 hover:bg-purple-700'
               }`}>
               <Check className="w-4 h-4" /> 確認套用
             </button>

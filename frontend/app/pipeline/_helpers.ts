@@ -121,6 +121,8 @@ export interface ComputerUseAction {
   full_top?: number     // 全螢幕截圖對應的虛擬桌面原點 Y
   // search_region：CV / OCR / VLM 搜尋矩形（紅框，絕對桌面座標 [l,t,w,h]）
   search_region?: number[]
+  // CV 嚴格鎖定範圍：true = 紅框內找不到立即 fail（不退附近、不退全螢幕、不退錄製座標）
+  cv_strict_region?: boolean
   // VLM 相關欄位（vlm_check / click_image vlm_mode / 視覺判斷模板用）
   vlm_prompt?: string   // vlm_check 判斷條件、或 vlm_mode=description 的目標描述
   vlm_mode?: 'off' | 'description' | 'anchor_pick'
