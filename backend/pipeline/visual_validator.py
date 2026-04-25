@@ -24,8 +24,18 @@ IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
 MAX_IMAGES = 6  # 多頁 xlsx / pptx 可能很多張，限制送的張數避免 token 爆掉
 
 
+def _wsl_to_windows_path(path: str) -> str:
+    """LLM / 上一節點若用沙盒輸出路徑（/mnt/c/...），轉回 Windows 路徑。"""
+    import re as _re
+    m = _re.match(r"^/mnt/([a-z])/(.*)$", str(path).strip())
+    if not m:
+        return path
+    return f"{m.group(1).upper()}:\\{m.group(2).replace('/', chr(92))}"
+
+
 def _resolve_image_for_file(file_path: str, out_dir: Optional[str] = None) -> list[str]:
     """檔案 → PNG 路徑清單。圖檔回自身路徑；其他類型走 render_file_preview。"""
+    file_path = _wsl_to_windows_path(file_path)
     p = Path(file_path)
     if not p.exists() or not p.is_file():
         return []

@@ -546,14 +546,30 @@ IMAGE_EXTS_SKILL = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/j
                     '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp'}
 
 
+def _wsl_to_windows_path(path: str) -> str:
+    """LLM 在沙盒裡跑時常吐 `/mnt/c/Users/...` 路徑，但 view_image 在 host（Windows）上
+    讀檔，要把它轉回 `C:\\Users\\...`。已是 Windows 路徑或非 /mnt/ 開頭就原樣回。
+    沒這層翻譯 V3 log 看到 view_image 永遠回「圖片不存在」+ LLM 幻覺出假結果。"""
+    import re as _re
+    m = _re.match(r"^/mnt/([a-z])/(.*)$", path.strip())
+    if not m:
+        return path
+    drive = m.group(1).upper()
+    rest = m.group(2).replace("/", "\\")
+    return f"{drive}:\\{rest}"
+
+
 def _skill_view_image(path: str) -> dict:
     """讀圖片並回 base64 給 agent loop 注入多模態訊息。
     回 {"text": ..., "image_b64": str|None, "image_mime": str|None}
     上限 20 MB；超過或不是圖片就回錯誤訊息（image_b64=None）。"""
     try:
-        p = Path(path.strip().strip('"').strip("'")).expanduser()
+        cleaned = path.strip().strip('"').strip("'")
+        # 沙盒路徑 → Windows 路徑（V3 view_image bug：LLM 跑沙盒給 /mnt/c/... 結果讀不到）
+        cleaned = _wsl_to_windows_path(cleaned)
+        p = Path(cleaned).expanduser()
         if not p.exists():
-            return {"text": f"[錯誤] 圖片不存在：{path}", "image_b64": None, "image_mime": None}
+            return {"text": f"[錯誤] 圖片不存在：{path}（解析後：{p}）", "image_b64": None, "image_mime": None}
         ext = p.suffix.lower()
         if ext not in IMAGE_EXTS_SKILL:
             return {"text": f"[錯誤] 不支援的圖片格式：{ext}，支援 {list(IMAGE_EXTS_SKILL.keys())}",
