@@ -611,13 +611,25 @@ def execute_action(
             ocr_will_run = use_ocr and bool(ocr_text)
 
             # ── VLM 模式 1：description → OCR ──
+            # bug 修補：之前讀錯欄位（讀紅框 search_region），這個模式既然走 OCR，
+            # 區域就應該讀使用者在編輯器拉的「藍框」（ocr_box_*），跟純 OCR 路徑一致
             if vlm_mode == "description":
                 vlm_prompt_click = (action.get("vlm_prompt") or action.get("description") or "").strip()
                 if not vlm_prompt_click:
                     return ActionResult(False, index, atype,
                         "vlm_mode=description 但 vlm_prompt 為空（必填）")
-                region_rect_v = _parse_search_region(action)
-                vlm_found, vlm_text, vlm_reason = _vlm_describe_to_text(vlm_prompt_click, region_rect_v, logger)
+                # 讀藍框（OCR 區域）— 跟下面純 OCR 路徑同邏輯
+                _vlm_box_w = int(action.get("ocr_box_width", 0) or 0)
+                _vlm_box_h = int(action.get("ocr_box_height", 0) or 0)
+                vlm_region: Optional[tuple[int, int, int, int]] = None
+                if _vlm_box_w > 0 and _vlm_box_h > 0:
+                    vlm_region = (
+                        int(action.get("ocr_box_left", 0) or 0),
+                        int(action.get("ocr_box_top", 0) or 0),
+                        _vlm_box_w,
+                        _vlm_box_h,
+                    )
+                vlm_found, vlm_text, vlm_reason = _vlm_describe_to_text(vlm_prompt_click, vlm_region, logger)
                 if not vlm_found:
                     return ActionResult(False, index, atype,
                         f"VLM 在螢幕找不到目標：{vlm_reason}")
@@ -637,7 +649,7 @@ def execute_action(
                     screen_bgr_v, vlm_text, origin_x=sxv, origin_y=syv,
                     lang_tag="zh-Hant-TW", near_xy=near_v,
                     search_radius=cv_search_radius, threshold=ocr_threshold,
-                    region=region_rect_v,
+                    region=vlm_region,
                 )
                 if not ocr_res_v.found:
                     return ActionResult(False, index, atype,
