@@ -1,0 +1,34 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+python-dotenv==1.0.1
+pyyaml==6.0.2
+langchain-core
+langchain-groq
+langchain-google-genai
+google-genai
+langchain-ollama>=0.3.0
+apscheduler==3.10.4
+sqlalchemy==2.0.36
+python-telegram-bot==21.6
+aiofiles==24.1.0
+openpyxl
+python-multipart
+
+# 人工確認節點「附上一步驟輸出檔案預覽」功能（host 端 render 成 PNG 傳 TG）
+# B1 簡單 render 路徑用；PDF 後備透過 libreoffice 轉 PDF 再用 pypdfium2 抓第 1 頁
+pandas
+python-docx
+python-pptx
+Pillow
+matplotlib
+pypdfium2
+
+# Windows 內建 OCR（computer_use 節點 OCR 比對用；Windows-only，非 Windows 環境會被跳過）
+# 透過 WinRT 存取 Windows.Media.Ocr API — 無須安裝 Tesseract 等外部 binary
+winrt-Windows.Media.Ocr; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging; sys_platform == "win32"
+winrt-Windows.Storage.Streams; sys_platform == "win32"
+winrt-Windows.Globalization; sys_platform == "win32"
+winrt-Windows.Foundation; sys_platform == "win32"
+winrt-Windows.Foundation.Collections; sys_platform == "win32"
