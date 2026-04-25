@@ -41,6 +41,8 @@ import {
   deleteComputerUseAssets,
 } from '@/lib/api'
 import AnchorEditorModal from './_anchorEditorModal'
+import VlmAnchorPicker from './_vlmAnchorPicker'
+import { assetImageUrl } from '@/lib/api'
 
 const NODE_COLOR = '#9333ea'
 
@@ -144,6 +146,8 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
     onUpdate({ actions: next })
   }
   const [editingAnchor, setEditingAnchor] = useState<number | null>(null)
+  // VLM 挑錨點 file picker：用 actionIndex 表示對哪一個動作開
+  const [pickingVlmAnchorsAt, setPickingVlmAnchorsAt] = useState<number | null>(null)
   const applyAnchorPatch = (i: number, patch: Partial<ComputerUseAction>) => {
     const next = [...(data.actions || [])]
     next[i] = { ...next[i], ...patch }
@@ -439,17 +443,46 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
                                 rows={1}
                                 className="w-full text-[11px] px-1.5 py-1 rounded border border-indigo-300 bg-white outline-none focus:border-indigo-500 font-mono resize-y"
                               />
-                              <textarea
-                                value={(a.vlm_anchors || []).join('\n')}
-                                onChange={e => applyAnchorPatch(i, {
-                                  vlm_anchors: e.target.value.split('\n').map(s => s.trim()).filter(Boolean)
-                                })}
-                                placeholder="每行一個錨點檔名（assets_dir 內，例：&#10;btn_red.png&#10;btn_red_hover.png&#10;btn_red_dark.png）"
-                                rows={3}
-                                className="w-full text-[11px] px-1.5 py-1 rounded border border-indigo-300 bg-white outline-none focus:border-indigo-500 font-mono resize-y"
-                              />
+                              {/* 已選錨點 chips（縮圖 + 檔名 + 移除）*/}
+                              {(a.vlm_anchors && a.vlm_anchors.length > 0) ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {a.vlm_anchors.map((name, ai) => (
+                                    <div key={ai}
+                                      className="inline-flex items-center gap-1 px-1.5 py-1 bg-white border border-indigo-300 rounded">
+                                      <img
+                                        src={assetImageUrl(data.assetsDir || defaultAssetsDir, name)}
+                                        alt={name}
+                                        className="w-8 h-6 object-contain rounded bg-gray-100"
+                                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                      />
+                                      <span className="text-[11px] font-mono text-gray-700 max-w-[120px] truncate" title={name}>
+                                        {name}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => applyAnchorPatch(i, {
+                                          vlm_anchors: (a.vlm_anchors || []).filter(x => x !== name)
+                                        })}
+                                        title="從候選中移除"
+                                        className="text-gray-300 hover:text-red-500 p-0.5"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => setPickingVlmAnchorsAt(i)}
+                                className="w-full text-[11px] px-2 py-1.5 rounded border border-dashed border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-50 hover:border-indigo-500 transition-colors"
+                              >
+                                {(a.vlm_anchors && a.vlm_anchors.length > 0) ? '+ 從錨點資料夾再選 / 修改' : '+ 從錨點資料夾選圖（不用打檔名）'}
+                              </button>
                               <p className="text-[10px] text-gray-500 leading-relaxed">
-                                共 {(a.vlm_anchors || []).length} 張候選；至少需 2 張不同變體（不同主題色 / hover 狀態 / 視窗版本）
+                                共 {(a.vlm_anchors || []).length} 張候選。
+                                <strong className="text-indigo-700">1 張</strong> = VLM 守門員 + 強制 CV（避開盲點錄製座標的 fast-path）；
+                                <strong className="text-indigo-700">2+ 張不同變體</strong> = VLM 看畫面當下挑最像的那張，再走 CV
                               </p>
                             </>
                           )}
@@ -796,6 +829,16 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
           defaultSearchRadius={data.cvSearchRadius || 400}
           onApply={(patch) => applyAnchorPatch(editingAnchor, patch)}
           onClose={() => setEditingAnchor(null)}
+        />
+      )}
+
+      {/* VLM 挑錨點 file picker Modal */}
+      {pickingVlmAnchorsAt !== null && data.actions && data.actions[pickingVlmAnchorsAt] && (
+        <VlmAnchorPicker
+          assetsDir={data.assetsDir || defaultAssetsDir}
+          initialSelected={data.actions[pickingVlmAnchorsAt].vlm_anchors || []}
+          onApply={(anchors) => applyAnchorPatch(pickingVlmAnchorsAt, { vlm_anchors: anchors } as Partial<ComputerUseAction>)}
+          onClose={() => setPickingVlmAnchorsAt(null)}
         />
       )}
     </div>

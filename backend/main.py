@@ -442,6 +442,35 @@ def _validate_assets_path(path_str: str) -> "Path":
     return target_resolved
 
 
+@app.get("/computer-use/assets/list")
+async def list_assets(dir: str):
+    """列出 assets_dir 內的 PNG 錨點檔。給「VLM 挑錨點」的檔案選擇器用 —
+    使用者錄完動作後，這個目錄會有 img_NNN.png（自動截）跟 img_NNN_manual.png
+    （手動圈），這兩種都是合法錨點；full_NNN.png 是全螢幕截圖（給編輯器顯示
+    用），不是錨點，過濾掉。"""
+    target_dir = _validate_assets_path(dir)
+    if not target_dir.is_dir():
+        return {"dir": str(target_dir), "files": []}
+    files = []
+    for p in sorted(target_dir.iterdir()):
+        if not p.is_file():
+            continue
+        if p.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+            continue
+        if p.name.startswith("full_"):
+            continue   # 全螢幕截圖不是錨點
+        try:
+            stat = p.stat()
+            files.append({
+                "name": p.name,
+                "size": stat.st_size,
+                "mtime": int(stat.st_mtime),
+            })
+        except OSError:
+            continue
+    return {"dir": str(target_dir), "files": files}
+
+
 @app.get("/computer-use/assets/image")
 async def get_assets_image(dir: str, name: str):
     """提供單一錨點/全螢幕 PNG 檔供前端顯示（Modal 編輯錨點時用）。

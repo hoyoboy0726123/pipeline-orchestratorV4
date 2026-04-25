@@ -885,3 +885,24 @@ export async function getScreenSnapshot(): Promise<ScreenSnapshot> {
   }
   return res.json()
 }
+
+// ── 列 assets_dir 內的錨點 PNG 檔（給 VLM 挑錨點 file picker 用）
+export interface AssetFileEntry {
+  name: string
+  size: number
+  mtime: number
+}
+export async function listAssetFiles(dir: string): Promise<{ dir: string; files: AssetFileEntry[] }> {
+  const url = `${BASE}/computer-use/assets/list?dir=${encodeURIComponent(dir)}`
+  const res = await fetchWithRetry(url)
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`列檔案失敗（${res.status}）：${detail}`)
+  }
+  return res.json()
+}
+
+// 直接給縮圖 URL（讓 <img src=...> 載入；瀏覽器會自動 GET）
+export function assetImageUrl(dir: string, name: string): string {
+  return `${BASE}/computer-use/assets/image?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(name)}`
+}
