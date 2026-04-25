@@ -391,6 +391,77 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
                         )}
                       </div>
                     )}
+                    {/* VLM 輔助模式（click_image 專用，永遠不直接給座標）
+                        - off          → 走原本 OCR / 座標 / CV 三模式
+                        - description  → VLM 看圖 + vlm_prompt → 回目標文字 → OCR 找該文字 → 點中心
+                        - anchor_pick  → VLM 從多張錨點變體挑一張 → 用挑出的圖走 CV 比對
+                        VLM mode 開了會吃掉 OCR/座標短路（每次回放多一次 VLM 呼叫；準確度↑、速度↓） */}
+                    {a.type === 'click_image' && (() => {
+                      const vlmMode = (a.vlm_mode || 'off') as 'off' | 'description' | 'anchor_pick'
+                      const vlmActive = vlmMode !== 'off'
+                      return (
+                        <div className="mt-1 space-y-1">
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="text-[10px] text-gray-500 mr-0.5">VLM 輔助：</span>
+                            {([
+                              { v: 'off',         label: '關',         hint: '不啟用 VLM，走原本 OCR / 座標 / CV' },
+                              { v: 'description', label: '描述→OCR',   hint: 'VLM 看圖回目標文字→OCR 找文字→點中心。VLM 不給座標' },
+                              { v: 'anchor_pick', label: '挑錨點',     hint: 'VLM 從多張變體錨點挑最像的→用該張走 CV 比對' },
+                            ] as const).map(opt => (
+                              <button
+                                key={opt.v}
+                                type="button"
+                                onClick={() => applyAnchorPatch(i, { vlm_mode: opt.v })}
+                                title={opt.hint}
+                                className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                                  vlmMode === opt.v
+                                    ? 'bg-indigo-500 text-white border-indigo-500'
+                                    : 'bg-white text-gray-500 border-gray-200 hover:border-indigo-300 hover:text-indigo-600'
+                                }`}
+                              >{opt.label}</button>
+                            ))}
+                          </div>
+                          {vlmMode === 'description' && (
+                            <textarea
+                              value={a.vlm_prompt || ''}
+                              onChange={e => applyAnchorPatch(i, { vlm_prompt: e.target.value })}
+                              placeholder="描述要點什麼（例：紅色「送出」按鈕，不是藍色取消鈕）"
+                              rows={2}
+                              className="w-full text-[11px] px-1.5 py-1 rounded border border-indigo-300 bg-white outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-400/20 font-mono resize-y"
+                            />
+                          )}
+                          {vlmMode === 'anchor_pick' && (
+                            <>
+                              <textarea
+                                value={a.vlm_prompt || ''}
+                                onChange={e => applyAnchorPatch(i, { vlm_prompt: e.target.value })}
+                                placeholder="描述要點什麼（給 VLM 判斷哪張錨點符合當下螢幕）"
+                                rows={1}
+                                className="w-full text-[11px] px-1.5 py-1 rounded border border-indigo-300 bg-white outline-none focus:border-indigo-500 font-mono resize-y"
+                              />
+                              <textarea
+                                value={(a.vlm_anchors || []).join('\n')}
+                                onChange={e => applyAnchorPatch(i, {
+                                  vlm_anchors: e.target.value.split('\n').map(s => s.trim()).filter(Boolean)
+                                })}
+                                placeholder="每行一個錨點檔名（assets_dir 內，例：&#10;btn_red.png&#10;btn_red_hover.png&#10;btn_red_dark.png）"
+                                rows={3}
+                                className="w-full text-[11px] px-1.5 py-1 rounded border border-indigo-300 bg-white outline-none focus:border-indigo-500 font-mono resize-y"
+                              />
+                              <p className="text-[10px] text-gray-500 leading-relaxed">
+                                共 {(a.vlm_anchors || []).length} 張候選；至少需 2 張不同變體（不同主題色 / hover 狀態 / 視窗版本）
+                              </p>
+                            </>
+                          )}
+                          {vlmActive && (
+                            <p className="text-[10px] text-amber-600 leading-relaxed">
+                              ⚠ VLM 模式啟用中，下方 OCR / 圖像比對切換會被忽略（VLM 永遠優先）。
+                              每次回放多一次 VLM 呼叫（耗 token + ~1-3 秒）
+                            </p>
+                          )}
+                        </div>
+                      )
+                    })()}
                     {/* OCR 文字比對（只對 click_image action 顯示）
                         規則：
                           - checkbox 勾選 = use_ocr=true，input enable；OCR 變為 primary 方法
