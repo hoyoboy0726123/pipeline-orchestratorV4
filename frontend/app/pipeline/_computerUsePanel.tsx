@@ -1,8 +1,38 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { X, Circle, Square as StopIcon, Play, Trash2, ChevronUp, ChevronDown, Pencil } from 'lucide-react'
+import { X, Circle, Square as StopIcon, Play, Trash2, ChevronUp, ChevronDown, Pencil, Plus, Eye } from 'lucide-react'
 import { toast } from 'sonner'
 import type { ComputerUseData, ComputerUseNode, ComputerUseAction } from './_helpers'
+
+// ── vlm_check 內建模板（6 個常見場景）─────────────────────────────
+const VLM_CHECK_BUILTIN_TEMPLATES: { id: string; label: string; prompt: string }[] = [
+  { id: 'login_success',    label: '登入成功訊息',  prompt: '畫面是否顯示「登入成功」、「歡迎回來」之類的成功提示？沒有任何錯誤訊息？' },
+  { id: 'error_message',    label: '無錯誤訊息',     prompt: '畫面是否「沒有」紅色錯誤訊息或失敗提示？所有 input 欄位都正常無紅框？' },
+  { id: 'dialog_appeared',  label: '對話框已出現',  prompt: '畫面是否有對話框（彈窗）出現，且標題或按鈕清楚可見？' },
+  { id: 'page_loaded',      label: '頁面載入完成',  prompt: '頁面主要內容是否完整顯示？沒有 spinner、骨架屏或載入中狀態？' },
+  { id: 'button_active',    label: '按鈕變可點擊',  prompt: '目標按鈕是否變為可點擊狀態（顏色變亮、不再 disabled）？' },
+  { id: 'data_loaded',      label: '資料已載入',     prompt: '畫面是否顯示了實際資料（表格有列、清單有項目），不是空白或「無資料」訊息？' },
+]
+
+const VLM_CUSTOM_TEMPLATES_KEY = 'pipeline.vlm_check.custom_templates.v1'
+type CustomTemplate = { id: string; label: string; prompt: string }
+
+function loadCustomTemplates(): CustomTemplate[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.localStorage.getItem(VLM_CUSTOM_TEMPLATES_KEY)
+    if (!raw) return []
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr) ? arr.filter(x => x && x.label && x.prompt) : []
+  } catch { return [] }
+}
+
+function saveCustomTemplates(items: CustomTemplate[]): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(VLM_CUSTOM_TEMPLATES_KEY, JSON.stringify(items))
+  } catch (e) { console.warn('save custom templates failed:', e) }
+}
 import {
   startComputerUseRecording,
   stopComputerUseRecording,
@@ -120,6 +150,56 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
     onUpdate({ actions: next })
   }
 
+  // 在指定位置插入 vlm_check 動作（template 帶 prompt 進去；無 template 時 prompt 留空，使用者自填）
+  const insertVlmCheckAt = (index: number, prompt: string, label?: string) => {
+    const next = [...(data.actions || [])]
+    const newAction: ComputerUseAction = {
+      type: 'vlm_check',
+      description: label ? `視覺判斷：${label}` : '視覺判斷',
+      vlm_prompt: prompt,
+    } as ComputerUseAction
+    next.splice(index, 0, newAction)
+    onUpdate({ actions: next })
+  }
+
+  // ➕ popover 開關：用 actionIndex 表示要在哪一個 index 插入（actions.length = 在最後）
+  const [insertOpenAt, setInsertOpenAt] = useState<number | null>(null)
+  const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>(() => loadCustomTemplates())
+  // 點外面關閉 popover
+  useEffect(() => {
+    if (insertOpenAt === null) return
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement
+      if (!t.closest('[data-vlm-insert-popover]') && !t.closest('[data-vlm-insert-trigger]')) {
+        setInsertOpenAt(null)
+      }
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [insertOpenAt])
+
+  const handlePickTemplate = (index: number, prompt: string, label: string) => {
+    insertVlmCheckAt(index, prompt, label)
+    setInsertOpenAt(null)
+    toast.success(`已插入 vlm_check：${label}`)
+  }
+
+  const handleSaveCustomFromCurrent = (label: string, prompt: string) => {
+    const trimmed = label.trim()
+    const trimmedPrompt = prompt.trim()
+    if (!trimmed || !trimmedPrompt) { toast.error('名稱和 prompt 都不能空白'); return }
+    const next = [...customTemplates, { id: `custom_${Date.now()}`, label: trimmed, prompt: trimmedPrompt }]
+    setCustomTemplates(next)
+    saveCustomTemplates(next)
+    toast.success(`已存自訂模板：${trimmed}`)
+  }
+
+  const handleDeleteCustom = (id: string) => {
+    const next = customTemplates.filter(t => t.id !== id)
+    setCustomTemplates(next)
+    saveCustomTemplates(next)
+  }
+
   const toggleUseCoord = (i: number) => {
     const next = [...(data.actions || [])]
     const cur = { ...next[i] }
@@ -208,14 +288,45 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
                 className="text-[11px] text-red-500 hover:text-red-700">清除全部</button>
             )}
           </div>
-          {(!data.actions || data.actions.length === 0) ? (
-            <p className="text-xs text-gray-400 text-center py-6 border border-dashed border-gray-200 rounded-lg">
-              尚未錄製任何動作
+          {/* 錄製中提示：F8 插入視覺判斷標記、F9 停止 */}
+          {recording && (
+            <p className="text-[11px] text-purple-700 bg-purple-50 border border-purple-200 rounded px-2 py-1 mb-2">
+              <Eye className="inline w-3 h-3 mr-1" />
+              錄製中：按 <span className="font-mono font-bold">F8</span> 在當下位置插入視覺判斷（vlm_check）標記
+              ／按 <span className="font-mono font-bold">F9</span> 停止錄製
             </p>
+          )}
+          {(!data.actions || data.actions.length === 0) ? (
+            <>
+              <p className="text-xs text-gray-400 text-center py-6 border border-dashed border-gray-200 rounded-lg">
+                尚未錄製任何動作
+              </p>
+              {/* 沒動作時也可以手動加 vlm_check */}
+              <VlmCheckInserter
+                index={0}
+                isOpen={insertOpenAt === 0}
+                openMenu={() => setInsertOpenAt(0)}
+                onPick={handlePickTemplate}
+                onSaveCustom={handleSaveCustomFromCurrent}
+                onDeleteCustom={handleDeleteCustom}
+                customTemplates={customTemplates}
+              />
+            </>
           ) : (
             <div className="space-y-1.5">
               {data.actions.map((a: ComputerUseAction, i: number) => (
-                <div key={i} className="flex items-start gap-2 p-2 bg-gray-50 border border-gray-200 rounded-lg">
+                <div key={i}>
+                {/* 動作前的 ➕ 插入點 */}
+                <VlmCheckInserter
+                  index={i}
+                  isOpen={insertOpenAt === i}
+                  openMenu={() => setInsertOpenAt(i)}
+                  onPick={handlePickTemplate}
+                  onSaveCustom={handleSaveCustomFromCurrent}
+                  onDeleteCustom={handleDeleteCustom}
+                  customTemplates={customTemplates}
+                />
+                <div className="flex items-start gap-2 p-2 bg-gray-50 border border-gray-200 rounded-lg">
                   <span className="text-[10px] font-mono text-gray-400 pt-0.5">#{i + 1}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -264,6 +375,21 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
                     )}
                     {typeof a.seconds === 'number' && a.seconds > 0 && (
                       <p className="text-xs text-gray-500 mt-0.5">{a.seconds}s</p>
+                    )}
+                    {/* vlm_check 動作：直接內嵌 vlm_prompt 編輯 */}
+                    {a.type === 'vlm_check' && (
+                      <div className="mt-1 space-y-1">
+                        <textarea
+                          value={a.vlm_prompt || ''}
+                          onChange={e => applyAnchorPatch(i, { vlm_prompt: e.target.value } as Partial<ComputerUseAction>)}
+                          placeholder="判斷條件（例：畫面是否出現綠色「登入成功」訊息？）"
+                          rows={2}
+                          className="w-full text-[11px] px-1.5 py-1 rounded border border-purple-300 bg-white outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-400/20 font-mono resize-y"
+                        />
+                        {!a.vlm_prompt && (
+                          <p className="text-[10px] text-amber-600">⚠ vlm_prompt 為空 — 步驟執行時會直接報錯</p>
+                        )}
+                      </div>
                     )}
                     {/* OCR 文字比對（只對 click_image action 顯示）
                         規則：
@@ -334,7 +460,18 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
                     <Trash2 className="w-3 h-3" />
                   </button>
                 </div>
+                </div>
               ))}
+              {/* 列表最後的 ➕ 插入點 */}
+              <VlmCheckInserter
+                index={data.actions.length}
+                isOpen={insertOpenAt === data.actions.length}
+                openMenu={() => setInsertOpenAt(data.actions.length)}
+                onPick={handlePickTemplate}
+                onSaveCustom={handleSaveCustomFromCurrent}
+                onDeleteCustom={handleDeleteCustom}
+                customTemplates={customTemplates}
+              />
             </div>
           )}
         </div>
@@ -589,6 +726,148 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
           onApply={(patch) => applyAnchorPatch(editingAnchor, patch)}
           onClose={() => setEditingAnchor(null)}
         />
+      )}
+    </div>
+  )
+}
+
+
+// ── VLM check 插入點：➕ 按鈕 + 模板選單 ─────────────────────────────
+// 6 個內建模板 + 自訂模板（localStorage）+ 「自訂…」可即時新增
+interface VlmCheckInserterProps {
+  index: number
+  isOpen: boolean
+  openMenu: () => void
+  onPick: (index: number, prompt: string, label: string) => void
+  onSaveCustom: (label: string, prompt: string) => void
+  onDeleteCustom: (id: string) => void
+  customTemplates: CustomTemplate[]
+}
+
+function VlmCheckInserter({
+  index, isOpen, openMenu, onPick, onSaveCustom, onDeleteCustom, customTemplates
+}: VlmCheckInserterProps) {
+  const [showCustomForm, setShowCustomForm] = useState(false)
+  const [customLabel, setCustomLabel] = useState('')
+  const [customPrompt, setCustomPrompt] = useState('')
+
+  const submitCustom = () => {
+    onSaveCustom(customLabel, customPrompt)
+    if (customLabel.trim() && customPrompt.trim()) {
+      // 立即用該模板插入
+      onPick(index, customPrompt.trim(), customLabel.trim())
+      setShowCustomForm(false)
+      setCustomLabel('')
+      setCustomPrompt('')
+    }
+  }
+
+  if (!isOpen) {
+    return (
+      <div className="flex justify-center -my-0.5">
+        <button
+          data-vlm-insert-trigger
+          type="button"
+          onClick={openMenu}
+          title="在此位置插入 vlm_check 視覺判斷"
+          className="opacity-30 hover:opacity-100 transition-opacity flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] text-purple-600 hover:bg-purple-100 hover:text-purple-700 border border-transparent hover:border-purple-300"
+        >
+          <Plus className="w-2.5 h-2.5" /> vlm_check
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div data-vlm-insert-popover
+      className="border border-purple-300 bg-white rounded-lg shadow-lg p-2 my-1 space-y-1.5">
+      <div className="flex items-center justify-between mb-0.5">
+        <span className="text-[11px] font-semibold text-purple-700 flex items-center gap-1">
+          <Eye className="w-3 h-3" /> 插入視覺判斷（vlm_check）
+        </span>
+        <span className="text-[10px] text-gray-400">在 #{index + 1} 之前</span>
+      </div>
+      {/* 內建 6 個模板 */}
+      <div className="space-y-0.5">
+        {VLM_CHECK_BUILTIN_TEMPLATES.map(t => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onPick(index, t.prompt, t.label)}
+            className="w-full text-left px-2 py-1 rounded hover:bg-purple-50 border border-transparent hover:border-purple-200"
+          >
+            <div className="text-[11px] font-medium text-gray-700">{t.label}</div>
+            <div className="text-[10px] text-gray-500 truncate">{t.prompt}</div>
+          </button>
+        ))}
+      </div>
+      {customTemplates.length > 0 && (
+        <>
+          <div className="text-[10px] text-gray-400 uppercase tracking-wide pt-1 border-t border-gray-100">自訂模板</div>
+          <div className="space-y-0.5">
+            {customTemplates.map(t => (
+              <div key={t.id} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onPick(index, t.prompt, t.label)}
+                  className="flex-1 text-left px-2 py-1 rounded hover:bg-purple-50 border border-transparent hover:border-purple-200"
+                >
+                  <div className="text-[11px] font-medium text-gray-700">{t.label}</div>
+                  <div className="text-[10px] text-gray-500 truncate">{t.prompt}</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDeleteCustom(t.id)}
+                  title="刪除這個自訂模板"
+                  className="text-gray-300 hover:text-red-500 px-1"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {!showCustomForm ? (
+        <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
+          <button
+            type="button"
+            onClick={() => setShowCustomForm(true)}
+            className="flex-1 text-[10px] text-purple-600 hover:text-purple-800 px-2 py-1 rounded border border-dashed border-purple-300 hover:bg-purple-50"
+          >
+            ➕ 新增自訂模板
+          </button>
+          <button
+            type="button"
+            onClick={() => onPick(index, '', '空白模板')}
+            title="插入空白 vlm_check（在動作面板內手填判斷條件）"
+            className="text-[10px] text-gray-500 hover:text-gray-800 px-2 py-1 rounded border border-gray-200 hover:bg-gray-50"
+          >
+            空白
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-1 pt-1 border-t border-gray-100">
+          <input
+            value={customLabel}
+            onChange={e => setCustomLabel(e.target.value)}
+            placeholder="模板名稱（例：表單送出成功）"
+            className="w-full text-[11px] px-1.5 py-1 rounded border border-gray-300 outline-none focus:border-purple-500"
+          />
+          <textarea
+            value={customPrompt}
+            onChange={e => setCustomPrompt(e.target.value)}
+            placeholder="判斷條件（給 VLM 看的提示）"
+            rows={2}
+            className="w-full text-[11px] px-1.5 py-1 rounded border border-gray-300 outline-none focus:border-purple-500 resize-y font-mono"
+          />
+          <div className="flex gap-1">
+            <button type="button" onClick={submitCustom}
+              className="flex-1 text-[10px] bg-purple-500 text-white px-2 py-1 rounded hover:bg-purple-600">儲存並插入</button>
+            <button type="button" onClick={() => { setShowCustomForm(false); setCustomLabel(''); setCustomPrompt('') }}
+              className="text-[10px] text-gray-500 hover:text-gray-800 px-2 py-1 rounded border border-gray-200">取消</button>
+          </div>
+        </div>
       )}
     </div>
   )

@@ -79,6 +79,7 @@ export interface HumanConfirmData extends Record<string, unknown> {
 // 桌面自動化動作（對應 backend ComputerUseAction）
 export interface ComputerUseAction {
   type: 'click_image' | 'click_at' | 'type_text' | 'hotkey' | 'wait' | 'wait_image' | 'screenshot' | 'scroll' | 'drag'
+      | 'assert_image' | 'assert_text' | 'activate_window' | 'if_image_found' | 'retry_until' | 'vlm_check'
   image?: string
   image2?: string        // 次錨點（多錨點驗證）
   dx2?: number           // 次錨點相對點擊點的 X 位移
@@ -111,6 +112,22 @@ export interface ComputerUseAction {
   full_image?: string   // 全螢幕截圖檔名（手動圈選編輯錨點時用）
   full_left?: number    // 全螢幕截圖對應的虛擬桌面原點 X（可能是負值）
   full_top?: number     // 全螢幕截圖對應的虛擬桌面原點 Y
+  // search_region：CV / OCR / VLM 搜尋矩形（紅框，絕對桌面座標 [l,t,w,h]）
+  search_region?: number[]
+  // VLM 相關欄位（vlm_check / click_image vlm_mode / 視覺判斷模板用）
+  vlm_prompt?: string   // vlm_check 判斷條件、或 vlm_mode=description 的目標描述
+  vlm_mode?: 'off' | 'description' | 'anchor_pick'
+  vlm_anchors?: string[] // vlm_mode=anchor_pick 用的多張變體錨點圖檔名
+  // 控制流：if_image_found / retry_until 用（unknown[] 因為遞迴 dict 巢狀）
+  then?: ComputerUseAction[]
+  else?: ComputerUseAction[]
+  do?: ComputerUseAction[]
+  until?: ComputerUseAction
+  max_attempts?: number
+  wait_between_sec?: number
+  // activate_window 用
+  title?: string
+  title_contains?: string
 }
 
 export interface ComputerUseData extends Record<string, unknown> {

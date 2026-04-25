@@ -363,8 +363,8 @@ _SPECIAL_KEYS = {
     "Key.page_up": "pageup", "Key.page_down": "pagedown",
     "Key.insert": "insert", "Key.caps_lock": "capslock",
     "Key.f1": "f1", "Key.f2": "f2", "Key.f3": "f3", "Key.f4": "f4",
-    "Key.f5": "f5", "Key.f6": "f6", "Key.f7": "f7", "Key.f8": "f8",
-    "Key.f10": "f10", "Key.f11": "f11", "Key.f12": "f12",  # f9 是停止錄製熱鍵不錄
+    "Key.f5": "f5", "Key.f6": "f6", "Key.f7": "f7",
+    "Key.f10": "f10", "Key.f11": "f11", "Key.f12": "f12",  # f8 = 插入 vlm_check 標記、f9 = 停止錄製，皆不錄
     "Key.print_screen": "printscreen", "Key.pause": "pause",
     "Key.num_lock": "numlock", "Key.scroll_lock": "scrolllock",
     "Key.menu": "apps",  # 鍵盤右下角的右鍵功能鍵（context menu）
@@ -430,7 +430,7 @@ def _on_scroll(x: int, y: int, dx: int, dy: int) -> None:
     })
 
 # 錄製期間自動忽略的 emergency keys（不列入 actions）
-_IGNORED_KEYS = {"Key.f9"}  # F9 將作為「停止錄製」熱鍵
+_IGNORED_KEYS = {"Key.f9", "Key.f8"}  # F9=停止錄製、F8=插入 vlm_check 標記
 
 
 def _on_press(key) -> None:
@@ -450,6 +450,19 @@ def _on_press(key) -> None:
     if key_str == "Key.f9":
         log.info("[recorder] F9 熱鍵觸發，停止錄製")
         threading.Thread(target=stop_recording, daemon=True).start()
+        return
+    # F8 = 插入 vlm_check 視覺判斷標記（vlm_prompt 留空，使用者錄完在面板補）
+    if key_str == "Key.f8":
+        log.info("[recorder] F8 熱鍵觸發，插入 vlm_check 標記")
+        flushed = session.key_buf.flush()
+        if flushed:
+            session.actions.append(flushed)
+        _maybe_insert_wait(session)
+        session.actions.append({
+            "type": "vlm_check",
+            "description": "(F8 標記) 視覺判斷 — 請填寫判斷條件",
+            "vlm_prompt": "",
+        })
         return
     if key_str in _IGNORED_KEYS:
         return
