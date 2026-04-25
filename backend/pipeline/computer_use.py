@@ -650,6 +650,7 @@ def execute_action(
                     lang_tag="zh-Hant-TW", near_xy=near_v,
                     search_radius=cv_search_radius, threshold=ocr_threshold,
                     region=vlm_region,
+                    strict_region=bool(action.get("ocr_strict_region", False)),
                 )
                 if not ocr_res_v.found:
                     return ActionResult(False, index, atype,
@@ -742,6 +743,7 @@ def execute_action(
                         near_xy=near, search_radius=cv_search_radius,
                         threshold=ocr_threshold,
                         region=ocr_region,
+                        strict_region=bool(action.get("ocr_strict_region", False)),
                     )
                     if ocr_res.found:
                         _do_click(pg, ocr_res.center[0], ocr_res.center[1],
@@ -1185,6 +1187,7 @@ def execute_action(
                     screen_bgr, text, origin_x=sx, origin_y=sy,
                     lang_tag="zh-Hant-TW",
                     threshold=threshold, region=region,
+                    strict_region=bool(action.get("ocr_strict_region", False)),
                 )
                 if ocr_res.found:
                     found_ocr = ocr_res

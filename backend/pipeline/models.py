@@ -97,6 +97,10 @@ class ComputerUseAction(BaseModel):
     ocr_box_top: int = 0
     ocr_box_width: int = 0
     ocr_box_height: int = 0
+    # OCR 嚴格鎖定範圍：True = 框內找不到立即 fail（不退 phase2 附近、不退 phase3 全螢幕）
+    # 用於「目標必須在固定位置才合法」的場景（例：通知必須在右下角才能點）
+    # 預設 False = 寬容三階段 fallback（適用多數場景）
+    ocr_strict_region: bool = False
     # activate_window 專用：至少要填 title 或 title_contains 其一
     title: str = ""              # 精確視窗標題比對
     title_contains: str = ""     # 視窗標題子字串比對（大小寫不敏感）
