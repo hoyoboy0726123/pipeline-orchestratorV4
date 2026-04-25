@@ -55,11 +55,13 @@ class ComputerUseAction(BaseModel):
       - activate_window：把指定標題的視窗切到前景（解決錄製回放時視窗不在前的常見問題）
       - if_image_found：條件分支 — 找到 image 就跑 then: 動作清單，否則跑 else:
       - retry_until：重複跑 do: 清單直到 until: 動作成功（處理按鈕要按多次、網路抖動等）
+      - vlm_check：用 Settings 主模型（必須支援視覺）判斷螢幕當下是否符合 vlm_prompt 描述。
+        純判斷不點擊；pass=False 步驟即失敗。可選 search_region 把截圖裁成關鍵區域省 token。
     """
     # YAML 會用 else: 這個 Python 保留字當 key，靠 pydantic alias 接回 Python 端的 else_
     model_config = ConfigDict(populate_by_name=True)
 
-    type: str  # click_image | click_at | type_text | hotkey | wait | wait_image | screenshot | scroll | drag | assert_image | assert_text | activate_window | if_image_found | retry_until
+    type: str  # click_image | click_at | type_text | hotkey | wait | wait_image | screenshot | scroll | drag | assert_image | assert_text | activate_window | if_image_found | retry_until | vlm_check
     image: str = ""       # 主錨點圖檔名（相對 assets_dir）
     image2: str = ""      # 次錨點圖檔名（多錨點驗證用，選填）
     dx2: int = 0          # 次錨點相對點擊點的位移 x
@@ -113,6 +115,10 @@ class ComputerUseAction(BaseModel):
     until: Optional[dict] = None                 # retry_until：檢查條件（wait_image / assert_image / assert_text 之一）
     max_attempts: int = 3                        # retry_until：最多試幾輪
     wait_between_sec: float = 1.0                # retry_until：每輪之間等待秒數
+    # ── vlm_check 專用：給 Settings 主模型（視覺）判斷的 prompt ──────
+    # 不是讓 VLM 決定座標、不是讓它執行動作；只回傳 {"pass": bool, "reason": str}
+    # 模型本身不支援視覺時，呼叫會直接報錯（不靜默 fallback）
+    vlm_prompt: str = ""
 
 
 class PipelineStep(BaseModel):

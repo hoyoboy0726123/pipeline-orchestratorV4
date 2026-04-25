@@ -285,6 +285,69 @@ def _parse_search_region(action: dict) -> Optional[tuple[int, int, int, int]]:
     return (l, t, w, h)
 
 
+def _vlm_judge_screen(prompt: str, region: Optional[tuple[int, int, int, int]],
+                      logger: logging.Logger) -> tuple[bool, str]:
+    """vlm_check 用：把當下螢幕送 Settings 主模型，回 (pass, reason)。
+    region 給定就先把截圖裁成該矩形再送 VLM（省 token、聚焦關鍵區域）。
+    模型不支援視覺時直接回 (False, 錯誤訊息) — 不靜默 fallback。"""
+    import sys as _sys
+    import base64
+    import cv2
+
+    backend_dir = str(Path(__file__).resolve().parent.parent)
+    if backend_dir not in _sys.path:
+        _sys.path.insert(0, backend_dir)
+    from llm_factory import build_llm
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    screen, ox, oy = _capture_screen()
+    if region is not None:
+        l, t, w, h = region
+        x = max(0, l - ox)
+        y = max(0, t - oy)
+        x_end = min(screen.shape[1], x + w)
+        y_end = min(screen.shape[0], y + h)
+        if x_end <= x or y_end <= y:
+            return (False, f"裁切區域 {(l, t, w, h)} 與目前螢幕無交集")
+        screen = screen[y:y_end, x:x_end]
+
+    ok, buf = cv2.imencode(".jpg", screen, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+    if not ok:
+        return (False, "螢幕截圖 JPEG encode 失敗")
+    b64 = base64.b64encode(buf.tobytes()).decode()
+
+    sys_msg = ("你是 UI 視覺判斷器，看到的圖是螢幕當下狀態。嚴格依使用者描述的條件回 JSON："
+               '{"pass": true/false, "reason": "簡短中文說明"}。只回 JSON，不要 markdown、不要其他文字。')
+    user_content = [
+        {"type": "text", "text": f"判斷條件：{prompt}\n請看圖回 JSON。"},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+    ]
+
+    try:
+        llm = build_llm(temperature=0)
+        result = llm.invoke([SystemMessage(content=sys_msg), HumanMessage(content=user_content)])
+        raw = (getattr(result, "content", None) or "").strip()
+    except Exception as e:
+        return (False, f"LLM 呼叫失敗（請確認 Settings 選的模型支援視覺）：{e.__class__.__name__}: {e}")
+
+    if not raw:
+        return (False, "LLM 回應為空")
+    if "```" in raw:
+        parts = raw.split("```")
+        if len(parts) >= 2:
+            raw = parts[1].strip()
+            if raw.startswith("json"):
+                raw = raw[4:].strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return (False, f"LLM 回應不是 JSON：{raw[:200]}")
+    passed = bool(data.get("pass", False))
+    reason = str(data.get("reason") or "").strip() or "(無原因說明)"
+    logger.info(f"[vlm_check] pass={passed} reason={reason[:120]}")
+    return (passed, reason)
+
+
 def _pyautogui_with_failsafe():
     """lazy import pyautogui 並設好 failsafe / 節流"""
     import pyautogui
@@ -1016,6 +1079,21 @@ def execute_action(
             if not success:
                 return ActionResult(False, index, atype,
                     f"retry_until {max_attempts} 輪仍未成功：{last_fail_reason}")
+
+        elif atype == "vlm_check":
+            # 純判斷不點擊：把當下畫面送 Settings 主模型（必須支援視覺）
+            # 用途：登入後確認成功訊息、確認對話框出現、檢查表單填好等
+            # pass=false 步驟即失敗，VLM 寫的 reason 會出現在錯誤訊息中
+            prompt = (action.get("vlm_prompt") or action.get("description") or "").strip()
+            if not prompt:
+                return ActionResult(False, index, atype,
+                    "vlm_check 缺 vlm_prompt（判斷條件必填）")
+            region_rect = _parse_search_region(action)
+            passed, reason = _vlm_judge_screen(prompt, region_rect, logger)
+            if not passed:
+                return ActionResult(False, index, atype,
+                    f"VLM 判斷未通過：{reason}")
+            msg = f"VLM 判斷通過：{reason[:120]}"
 
         elif atype == "screenshot":
             import cv2
