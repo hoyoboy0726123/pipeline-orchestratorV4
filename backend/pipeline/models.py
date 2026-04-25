@@ -169,6 +169,16 @@ class PipelineStep(BaseModel):
     ocr_threshold: float = 0.6     # OCR 最小 confidence：低於這數字視為沒匹配到
                                    # 分級: 1.0 精確 / 0.9 target⊆word / 0.8 跨詞行層級 / 0.6 模糊
     ocr_cv_fallback: bool = False  # True = OCR 失敗時退到 CV 比對鏈（再受 cv_coord_fallback 接棒）；False（預設）= 失敗就 FAIL
+    # ── 視覺驗證節點（visual_validation）─────────────────────────────
+    # 獨立節點類型：不執行命令，純判斷。3 種來源餵給 Settings 主模型（必須支援視覺）：
+    #   prev_output_file → 直接用上一步 output.path 檔案（圖檔直送 VLM；非圖檔先 render_file_preview 轉 PNG）
+    #   rendered_preview → 一律走 render_file_preview（多 sheet 的 xlsx 會回多張 PNG，全部送 VLM）
+    #   current_screen   → 即時 mss 抓螢幕（搭配 vv_search_region 可裁切關鍵區域）
+    # VLM 回 {"pass": bool, "reason": str}；pass=false 步驟即失敗，retry 邏輯沿用既有
+    visual_validation: bool = False    # True = 視覺驗證節點
+    vv_source: str = "prev_output_file"  # prev_output_file | rendered_preview | current_screen
+    vv_prompt: str = ""                # 描述「應該看到什麼」的判斷條件（必填）
+    vv_search_region: list[int] = []   # current_screen 用：[left, top, width, height] 絕對桌面座標
 
 
 class PipelineConfig(BaseModel):

@@ -904,7 +904,35 @@ async def run_pipeline(
 
         # Retry loop for this step
         while True:
-            if step.computer_use:
+            if step.visual_validation:
+                # ── 視覺驗證節點：純 VLM 判斷，不執行命令 ──
+                from .visual_validator import run_visual_validation
+                from .executor import ExecResult as _ExecResult
+                prev_file = _find_prev_output_file(run, config) if step.vv_source != "current_screen" else None
+                # search_region 解析：4 整數 [l,t,w,h]，否則 None
+                _vsr = step.vv_search_region or []
+                vv_region = None
+                if isinstance(_vsr, (list, tuple)) and len(_vsr) == 4:
+                    try:
+                        vv_region = (int(_vsr[0]), int(_vsr[1]), int(_vsr[2]), int(_vsr[3]))
+                        if vv_region[2] <= 0 or vv_region[3] <= 0:
+                            vv_region = None
+                    except (TypeError, ValueError):
+                        vv_region = None
+                vv_pass, vv_reason = await run_visual_validation(
+                    source=step.vv_source,
+                    prompt=step.vv_prompt,
+                    prev_output_file=prev_file,
+                    out_dir=wd,
+                    search_region=vv_region,
+                    logger=logger,
+                )
+                exec_result = _ExecResult(
+                    exit_code=0 if vv_pass else 1,
+                    stdout=f"[visual_validation] {vv_reason}",
+                    stderr="" if vv_pass else f"VLM 判斷未通過：{vv_reason}",
+                )
+            elif step.computer_use:
                 # ── 桌面自動化節點：純 pyautogui + opencv，不走 LLM / recipe ──
                 from .computer_use import execute_computer_use_step
                 from .executor import ExecResult as _ExecResult
@@ -980,8 +1008,16 @@ async def run_pipeline(
                 exec_result.stderr = ""  # 清掉標記
 
             has_expect = step.output and step.output.get_expect()
+            # visual_validation 節點：節點自己就是 VLM 判斷，不需要再跑一次 LLM 驗證
+            if step.visual_validation:
+                _status = "ok" if exec_result.exit_code == 0 else "failed"
+                val = ValidationResult(
+                    status=_status,
+                    reason=exec_result.stdout.replace("[visual_validation] ", "") or "視覺驗證",
+                    suggestion=exec_result.stderr if _status == "failed" else "",
+                )
             # computer_use 節點：成敗已由 action 執行結果決定，不需 LLM 驗證
-            if step.computer_use:
+            elif step.computer_use:
                 _status = "ok" if exec_result.exit_code == 0 else "failed"
                 val = ValidationResult(
                     status=_status,
