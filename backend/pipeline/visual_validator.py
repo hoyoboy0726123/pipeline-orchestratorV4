@@ -1,12 +1,14 @@
 """
 視覺驗證節點：用 Settings 主模型（必須支援視覺）判斷某個圖像是否符合預期。
 
-3 種來源（vv_source）：
-  prev_output_file → 直接用上一步 output.path 檔案
-                     - 圖檔（png/jpg/...）→ 直送 VLM
-                     - 非圖檔（xlsx/docx/pdf/...）→ 走 render_file_preview 轉 PNG 再送
-  rendered_preview → 一律走 render_file_preview（多 sheet xlsx 會回多張 PNG）
-  current_screen   → 即時 mss 抓螢幕（可選 vv_search_region 裁切）
+2 種來源（vv_source）：
+  prev_output    → 上一步 output.path 檔案
+                   - 圖檔（png/jpg/...）→ 直送 VLM
+                   - 非圖檔（xlsx/docx/pdf/...）→ 自動 render_file_preview 轉 PNG 再送
+                     （xlsx 多 sheet → 每 sheet 一張，全部送）
+  current_screen → 即時 mss 抓螢幕（典型用途：computer_use 動作做完後，VLM 判斷
+                   畫面有沒有達到預期狀態，再決定要不要往下走）。可選 vv_search_region
+                   把截圖裁成關鍵區域省 token。
 
 回傳 (pass: bool, reason: str)。pass=False 步驟失敗、retry 邏輯沿用既有。
 """
@@ -107,19 +109,11 @@ async def run_visual_validation(
 
     # 1. 解析來源 → PNG 路徑清單
     images: list[str] = []
-    if source == "prev_output_file":
+    # 相容舊值 prev_output_file / rendered_preview（早期版本）— 都當 prev_output 處理
+    if source in ("prev_output", "prev_output_file", "rendered_preview"):
         if not prev_output_file:
             return (False, "找不到上一步輸出檔（沒有設 output.path 或檔案不存在）")
         images = _resolve_image_for_file(prev_output_file, out_dir=out_dir)
-    elif source == "rendered_preview":
-        if not prev_output_file:
-            return (False, "找不到上一步輸出檔（rendered_preview 需要 output.path）")
-        # 一律走 render_file_preview（圖檔也會 normalize）
-        try:
-            from .file_preview import render_file_preview
-        except Exception:
-            from pipeline.file_preview import render_file_preview  # type: ignore
-        images = render_file_preview(prev_output_file, out_dir=out_dir)
     elif source == "current_screen":
         out_path = Path(out_dir) / "_vv_screen.png"
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,7 +121,7 @@ async def run_visual_validation(
         if shot:
             images = [shot]
     else:
-        return (False, f"未知 vv_source：{source}（允許 prev_output_file / rendered_preview / current_screen）")
+        return (False, f"未知 vv_source：{source}（允許 prev_output / current_screen）")
 
     if not images:
         return (False, f"vv_source={source} 沒拿到任何圖片可送 VLM")

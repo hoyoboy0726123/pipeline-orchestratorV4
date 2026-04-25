@@ -10,7 +10,7 @@ const BASE = '/api/backend'
 const DIRECT_BASE = (() => {
   if (typeof window === 'undefined') return BASE
   const { hostname } = window.location
-  if (hostname === 'localhost' || hostname === '127.0.0.1') return 'http://localhost:8002'
+  if (hostname === 'localhost' || hostname === '127.0.0.1') return 'http://localhost:8003'
   return BASE
 })()
 
@@ -866,4 +866,22 @@ export async function clearWorkflowChat(workflowId: string): Promise<void> {
     method: 'DELETE',
   })
   if (!res.ok) throw new Error('清空對話失敗')
+}
+
+// ── 螢幕擷取（視覺驗證節點：current_screen 來源時，給「拉一塊」picker 用）
+export interface ScreenSnapshot {
+  origin_x: number    // 虛擬桌面左上絕對座標 X（多螢幕配置可能負值）
+  origin_y: number    // 虛擬桌面左上絕對座標 Y
+  width: number       // 截圖寬（像素）
+  height: number      // 截圖高（像素）
+  image_b64: string   // PNG base64
+}
+
+export async function getScreenSnapshot(): Promise<ScreenSnapshot> {
+  const res = await fetchWithRetry(`${BASE}/screen/snapshot`)
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`螢幕擷取失敗（${res.status}）：${detail}`)
+  }
+  return res.json()
 }

@@ -31,6 +31,11 @@ export interface StepData extends Record<string, unknown> {
   cvCoordFallback?: boolean              // true = CV 失敗時退回錄製座標硬點（預設 false = 失敗就停）
   ocrThreshold?: number                  // OCR 最小 conf 門檻（預設 0.6）
   ocrCvFallback?: boolean                // true = OCR 失敗接著 CV 比對（預設 false = 失敗就停）
+  // 視覺驗證節點（visual_validation）
+  visualValidation?: boolean             // optional — 視覺驗證步驟
+  vvSource?: 'prev_output' | 'current_screen'
+  vvPrompt?: string
+  vvSearchRegion?: number[]              // [left, top, width, height]，空陣列 = 看整個螢幕
   timeout: number
   retry: number
   index: number
@@ -150,15 +155,42 @@ export interface ComputerUseData extends Record<string, unknown> {
   errorMsg: string
 }
 
+/** 視覺驗證節點：用 Settings 主模型（必須支援視覺）判斷某個圖像是否符合預期 */
+export interface VisualValidationData extends Record<string, unknown> {
+  name: string
+  source: 'prev_output' | 'current_screen'   // 上一步輸出檔 / 目前螢幕畫面
+  prompt: string                              // 描述「應該看到什麼」的判斷條件
+  // current_screen 來源時可選的螢幕區域（虛擬桌面絕對座標）。空陣列 = 看整個螢幕
+  searchRegion: number[]   // [left, top, width, height]
+  index: number
+  status: 'idle' | 'running' | 'success' | 'failed'
+  errorMsg: string
+}
+
 export type ScriptNode = Node<StepData>
 export type SkillNode = Node<SkillData>
 export type AiValidationNode = Node<AiValidationData>
 export type HumanConfirmNode = Node<HumanConfirmData>
 export type ComputerUseNode = Node<ComputerUseData>
-export type AppNode = Node<StepData | AiValidationData | SkillData | HumanConfirmData | ComputerUseData>
+export type VisualValidationNode = Node<VisualValidationData>
+export type AppNode = Node<StepData | AiValidationData | SkillData | HumanConfirmData | ComputerUseData | VisualValidationData>
 
 export function newAiValidationData(index = 0): AiValidationData {
   return { expectText: '', targetPath: '', skillMode: false, index }
+}
+
+let _visualValidationCounter = 0
+export function newVisualValidationData(index = 0): VisualValidationData {
+  _visualValidationCounter++
+  return {
+    name: `視覺驗證 ${_visualValidationCounter}`,
+    source: 'prev_output',
+    prompt: '',
+    searchRegion: [],
+    index,
+    status: 'idle',
+    errorMsg: '',
+  }
 }
 
 let _confirmCounter = 0
@@ -271,6 +303,22 @@ export function stepsToFlow(steps: StepData[]): { nodes: AppNode[]; edges: Edge[
         } as ComputerUseData,
       }
     }
+    if (s.visualValidation) {
+      return {
+        id: `step-${i}`,
+        type: 'visualValidation' as const,
+        position: { x: i * 320, y: 160 },
+        data: {
+          name: s.name,
+          source: (s.vvSource === 'current_screen' ? 'current_screen' : 'prev_output') as 'prev_output' | 'current_screen',
+          prompt: s.vvPrompt || '',
+          searchRegion: Array.isArray(s.vvSearchRegion) ? s.vvSearchRegion : [],
+          index: i,
+          status: 'idle' as const,
+          errorMsg: '',
+        } as VisualValidationData,
+      }
+    }
     if (s.humanConfirm) {
       return {
         id: `step-${i}`,
@@ -348,11 +396,12 @@ export function flowToSteps(nodes: AppNode[], edges: Edge[]): StepData[] {
     }
   }
 
-  // 過濾出可執行節點（scriptStep + skillStep + humanConfirmation + computerUse）
+  // 過濾出可執行節點（scriptStep + skillStep + humanConfirmation + computerUse + visualValidation）
   const execNodeIds = new Set<string>()
   const execNodes: AppNode[] = []
   for (const n of nodes) {
-    if (n.type === 'scriptStep' || n.type === 'skillStep' || n.type === 'humanConfirmation' || n.type === 'computerUse') {
+    if (n.type === 'scriptStep' || n.type === 'skillStep' || n.type === 'humanConfirmation'
+        || n.type === 'computerUse' || n.type === 'visualValidation') {
       execNodeIds.add(n.id)
       execNodes.push(n)
     }
@@ -427,6 +476,25 @@ export function flowToSteps(nodes: AppNode[], edges: Edge[]): StepData[] {
       } as StepData
     }
 
+    if (n.type === 'visualValidation') {
+      const d = n.data as VisualValidationData
+      return {
+        name: d.name,
+        batch: '',
+        workingDir: '',
+        outputPath: '',
+        expect: '',
+        visualValidation: true,
+        vvSource: d.source,
+        vvPrompt: d.prompt,
+        vvSearchRegion: d.searchRegion && d.searchRegion.length === 4 ? d.searchRegion : [],
+        timeout: 120,
+        retry: 0,
+        index: i,
+        status: d.status,
+        errorMsg: d.errorMsg,
+      } as StepData
+    }
     if (n.type === 'humanConfirmation') {
       const d = n.data as HumanConfirmData
       return {
@@ -504,6 +572,26 @@ export function stepsToYaml(name: string, steps: StepData[]): string {
       if (s.humanConfirmScreenshot) lines.push(`    screenshot: true`)
       if (s.humanConfirmPreview) lines.push(`    preview_prev_output: true`)
       if (s.timeout && s.timeout !== 3600) lines.push(`    timeout: ${s.timeout}`)
+      continue
+    }
+    if (s.visualValidation) {
+      lines.push(`    visual_validation: true`)
+      lines.push(`    vv_source: ${s.vvSource || 'prev_output'}`)
+      const vvp = s.vvPrompt || ''
+      if (vvp) {
+        if (vvp.includes('\n') || vvp.length > 80) {
+          lines.push(`    vv_prompt: |`)
+          for (const dl of vvp.split('\n')) {
+            lines.push(`      ${dl}`)
+          }
+        } else {
+          lines.push(`    vv_prompt: "${vvp.replace(/"/g, '\\"')}"`)
+        }
+      }
+      if (s.vvSearchRegion && s.vvSearchRegion.length === 4) {
+        lines.push(`    vv_search_region: [${s.vvSearchRegion.join(', ')}]`)
+      }
+      if (s.timeout && s.timeout !== 120) lines.push(`    timeout: ${s.timeout}`)
       continue
     }
     if (s.computerUse) {
@@ -586,7 +674,7 @@ export function parseYaml(raw: string): { name: string; validate: boolean; steps
     const steps: StepData[] = []
     let cur: Partial<StepData> | null = null
     let inOutput = false
-    let multilineTarget: 'batch' | 'expect' | null = null
+    let multilineTarget: 'batch' | 'expect' | 'vv_prompt' | null = null
     let multilineIndent = 0
     let multilineLines: string[] = []
 
@@ -594,6 +682,7 @@ export function parseYaml(raw: string): { name: string; validate: boolean; steps
       if (multilineTarget && cur && multilineLines.length > 0) {
         const text = multilineLines.join('\n').replace(/\n+$/, '')
         if (multilineTarget === 'batch') cur.batch = text
+        else if (multilineTarget === 'vv_prompt') cur.vvPrompt = text
         else cur.expect = text
       }
       multilineTarget = null
@@ -672,6 +761,28 @@ export function parseYaml(raw: string): { name: string; validate: boolean; steps
         cur.humanConfirmScreenshot = /true/.test(t)
       } else if (/^preview_prev_output:/.test(t) && cur) {
         cur.humanConfirmPreview = /true/.test(t)
+      } else if (/^visual_validation:/.test(t) && cur) {
+        cur.visualValidation = /true/.test(t)
+      } else if (/^vv_source:/.test(t) && cur) {
+        const v = t.replace(/^vv_source:\s*/, '').replace(/^"|"$/g, '').trim()
+        // 相容舊值 prev_output_file / rendered_preview → 一律轉 prev_output
+        cur.vvSource = (v === 'current_screen' ? 'current_screen' : 'prev_output')
+      } else if (/^vv_prompt:/.test(t) && cur) {
+        const val = t.replace(/^vv_prompt:\s*/, '').replace(/^"|"$/g, '')
+        if (val === '|' || val === '>') {
+          multilineTarget = 'vv_prompt'
+          const nextLine = lines[li + 1]
+          multilineIndent = nextLine ? (nextLine.match(/^(\s*)/)?.[1].length ?? 0) : 0
+        } else {
+          cur.vvPrompt = val
+        }
+      } else if (/^vv_search_region:/.test(t) && cur) {
+        // 格式 [l, t, w, h]
+        const m = t.match(/\[([^\]]+)\]/)
+        if (m) {
+          const arr = m[1].split(',').map(x => parseInt(x.trim()) || 0)
+          if (arr.length === 4) cur.vvSearchRegion = arr
+        }
       } else if (/^timeout:/.test(t) && cur) {
         cur.timeout = parseInt(t.replace(/^timeout:\s*/, '')) || 300
         inOutput = false
@@ -708,7 +819,11 @@ function buildStep(partial: Partial<StepData>, index: number): StepData {
     humanConfirmNotifyTelegram: partial.humanConfirmNotifyTelegram ?? true,
     humanConfirmScreenshot: partial.humanConfirmScreenshot ?? false,
     humanConfirmPreview: partial.humanConfirmPreview ?? false,
-    timeout: partial.timeout ?? (partial.humanConfirm ? 3600 : 300),
+    visualValidation: partial.visualValidation ?? false,
+    vvSource: partial.vvSource ?? 'prev_output',
+    vvPrompt: partial.vvPrompt ?? '',
+    vvSearchRegion: partial.vvSearchRegion ?? [],
+    timeout: partial.timeout ?? (partial.humanConfirm ? 3600 : (partial.visualValidation ? 120 : 300)),
     retry: partial.retry ?? 0,
     index,
     status: 'idle',

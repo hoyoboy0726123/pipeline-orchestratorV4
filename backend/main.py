@@ -476,6 +476,36 @@ class CropRequest(BaseModel):
     save_as: str            # 輸出檔名（例如 img_003_manual.png）
 
 
+@app.get("/screen/snapshot")
+async def get_screen_snapshot():
+    """即時抓「整個虛擬桌面」一張 PNG，回 base64。視覺驗證節點的「螢幕區域拉選器」用。
+
+    回傳：
+      origin_x / origin_y：虛擬桌面左上角的絕對座標（多螢幕配置可能是負值）
+      width / height：截圖像素尺寸
+      image_b64：PNG base64（前端直接塞進 <img src="data:image/png;base64,..."/>）
+
+    座標系跟 computer_use 一致：使用者拉出的矩形 [l, t, w, h] 都用「虛擬桌面絕對座標」。"""
+    try:
+        import base64
+        import mss as _mss
+        from mss.tools import to_png as _to_png
+        with _mss.mss() as sct:
+            mon = sct.monitors[0]   # 虛擬桌面全景（含所有實體螢幕聯集）
+            shot = sct.grab(mon)
+            # to_png(data, size, output=None) → 直接回 PNG bytes（output=path 才寫檔）
+            png_bytes = _to_png(shot.rgb, shot.size)
+        return {
+            "origin_x": int(mon["left"]),
+            "origin_y": int(mon["top"]),
+            "width": int(mon["width"]),
+            "height": int(mon["height"]),
+            "image_b64": base64.b64encode(png_bytes).decode(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"螢幕擷取失敗：{e}")
+
+
 @app.get("/computer-use/monitors")
 async def get_computer_use_monitors():
     """列出實體螢幕的幾何（虛擬桌面絕對座標）。

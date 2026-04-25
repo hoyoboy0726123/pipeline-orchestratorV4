@@ -4,7 +4,7 @@ import {
   BaseEdge, EdgeLabelRenderer, getSmoothStepPath, useReactFlow,
   type EdgeProps, type Edge,
 } from '@xyflow/react'
-import { Plus, Trash2, Code2, Sparkles, Hand, Zap, BookOpen } from 'lucide-react'
+import { Plus, Trash2, Code2, Sparkles, Hand, Zap, BookOpen, Eye } from 'lucide-react'
 
 /**
  * 自訂 Edge：hover 時在中點浮出 + 跟 🗑️ 按鈕（n8n 風格）
@@ -31,7 +31,7 @@ export default function InsertableEdge(props: EdgeProps<Edge>) {
   }
 
   // 取得要新增節點的大概位置（edge 中點）
-  const handleInsert = (nodeType: 'scriptStep' | 'skillStep' | 'aiValidation' | 'humanConfirmation' | 'computerUse') => {
+  const handleInsert = (nodeType: 'scriptStep' | 'skillStep' | 'aiValidation' | 'humanConfirmation' | 'computerUse' | 'visualValidation') => {
     setMenuOpen(false)
     // 觸發全域事件讓 page.tsx 去處理（page.tsx 擁有 newStepData/newSkillData 等 factory）
     // 這樣邏輯不會跨檔重複
@@ -120,6 +120,10 @@ export default function InsertableEdge(props: EdgeProps<Edge>) {
               <button onClick={() => handleInsert('computerUse')}
                 className="w-full px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-rose-50 text-left">
                 <Zap className="w-3.5 h-3.5 text-rose-600" /> 桌面自動化
+              </button>
+              <button onClick={() => handleInsert('visualValidation')}
+                className="w-full px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-indigo-50 text-left">
+                <Eye className="w-3.5 h-3.5 text-indigo-600" /> 視覺驗證
               </button>
             </div>
           )}

@@ -176,7 +176,8 @@ class PipelineStep(BaseModel):
     #   current_screen   → 即時 mss 抓螢幕（搭配 vv_search_region 可裁切關鍵區域）
     # VLM 回 {"pass": bool, "reason": str}；pass=false 步驟即失敗，retry 邏輯沿用既有
     visual_validation: bool = False    # True = 視覺驗證節點
-    vv_source: str = "prev_output_file"  # prev_output_file | rendered_preview | current_screen
+    vv_source: str = "prev_output"     # prev_output | current_screen
+                                       # （早期值 prev_output_file / rendered_preview 仍受相容處理）
     vv_prompt: str = ""                # 描述「應該看到什麼」的判斷條件（必填）
     vv_search_region: list[int] = []   # current_screen 用：[left, top, width, height] 絕對桌面座標
 

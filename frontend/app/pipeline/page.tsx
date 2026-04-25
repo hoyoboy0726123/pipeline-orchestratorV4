@@ -22,16 +22,20 @@ import SkillStepNode               from './_skillNode'
 import AiValidationNodeComponent   from './_aiValidationNode'
 import HumanConfirmNodeComponent   from './_humanConfirmNode'
 import ComputerUseNodeComponent    from './_computerUseNode'
+import VisualValidationNodeComponent from './_visualValidationNode'
 import ScriptConfigPanel           from './_scriptPanel'
 import SkillConfigPanel            from './_skillPanel'
 import AiValidationPanel           from './_aiValidationPanel'
 import HumanConfirmPanel           from './_humanConfirmPanel'
 import ComputerUsePanel            from './_computerUsePanel'
+import VisualValidationPanel       from './_visualValidationPanel'
 import Sidebar                from './_sidebar'
 import {
-  type AppNode, type StepData, type SkillData, type AiValidationData, type HumanConfirmData, type ComputerUseData,
-  type ScriptNode, type SkillNode, type HumanConfirmNode, type ComputerUseNode,
+  type AppNode, type StepData, type SkillData, type AiValidationData, type HumanConfirmData,
+  type ComputerUseData, type VisualValidationData,
+  type ScriptNode, type SkillNode, type HumanConfirmNode, type ComputerUseNode, type VisualValidationNode,
   newStepData, newSkillData, newAiValidationData, newHumanConfirmData, newComputerUseData,
+  newVisualValidationData,
   stepsToFlow, flowToSteps, stepsToYaml, parseYaml,
 } from './_helpers'
 import { useWorkflowStore } from './_store'
@@ -51,6 +55,7 @@ const nodeTypes = {
   aiValidation: AiValidationNodeComponent,
   humanConfirmation: HumanConfirmNodeComponent,
   computerUse: ComputerUseNodeComponent,
+  visualValidation: VisualValidationNodeComponent,
 }
 
 // Edge 類型：全部用 InsertableEdge — hover 出 + / 🗑️ 按鈕（n8n 風格）
@@ -512,6 +517,7 @@ export default function PipelinePage() {
   }, [])
   const miniMapNodeColor = useCallback((n: { type?: string }) => {
     if (n.type === 'aiValidation') return '#f59e0b'
+    if (n.type === 'visualValidation') return '#6366f1'
     if (n.type === 'skillStep') return '#8b5cf6'
     if (n.type === 'humanConfirmation') return '#10b981'
     if (n.type === 'computerUse') return '#9333ea'
@@ -594,6 +600,17 @@ export default function PipelinePage() {
     setSelectedId(id)
   }, [nodes, setNodes])
 
+  // ── Add visual_validation（視覺驗證）節點 ──────────────────────────────
+  const addVisualValidation = useCallback(() => {
+    const id = `visual-validation-${Date.now()}`
+    const data = newVisualValidationData(nodes.length)
+    const lastNode = [...nodes].sort((a, b) => b.position.x - a.position.x)[0]
+    const x = lastNode ? lastNode.position.x + 280 : 100
+    const y = lastNode ? lastNode.position.y + 20 : 160
+    setNodes(ns => [...ns, { id, type: 'visualValidation', position: { x, y }, data }])
+    setSelectedId(id)
+  }, [nodes, setNodes])
+
   // ── Edge 上的 ➕ 按鈕：在指定 edge 中間插入新節點 ──────────────────────────
   // _insertableEdge.tsx dispatch 'pipeline-insert-node-on-edge' CustomEvent
   // detail = { edgeId, source, target, nodeType, labelX, labelY }
@@ -613,6 +630,7 @@ export default function PipelinePage() {
         case 'aiValidation':       data = newAiValidationData(0); break
         case 'humanConfirmation':  data = newHumanConfirmData(0); break
         case 'computerUse':        data = newComputerUseData(0); break
+        case 'visualValidation':   data = newVisualValidationData(0); break
         default: return
       }
       setNodes(ns => [...ns, { id, type: nodeType, position: { x: labelX - 100, y: labelY - 50 }, data }])
@@ -720,7 +738,7 @@ export default function PipelinePage() {
 
   // ── Run pipeline ──────────────────────────────────────────────────────────
   const handleRunClick = async () => {
-    const stepNodes = nodes.filter(n => n.type === 'scriptStep' || n.type === 'skillStep' || n.type === 'humanConfirmation' || n.type === 'computerUse')
+    const stepNodes = nodes.filter(n => n.type === 'scriptStep' || n.type === 'skillStep' || n.type === 'humanConfirmation' || n.type === 'computerUse' || n.type === 'visualValidation')
     if (stepNodes.length === 0) { toast.error('請先新增步驟'); return }
     const steps = flowToSteps(nodes, edges)
     // computer_use 節點用 actions 而非 batch；人工確認也不需要 batch
@@ -1136,7 +1154,7 @@ export default function PipelinePage() {
         ) : (
           <button
             onClick={handleRunClick}
-            disabled={nodes.filter(n => n.type === 'scriptStep' || n.type === 'skillStep' || n.type === 'humanConfirmation' || n.type === 'computerUse').length === 0}
+            disabled={nodes.filter(n => n.type === 'scriptStep' || n.type === 'skillStep' || n.type === 'humanConfirmation' || n.type === 'computerUse' || n.type === 'visualValidation').length === 0}
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors font-medium shadow-sm"
           >
             <Play className="w-3.5 h-3.5" /> 執行
@@ -1213,6 +1231,13 @@ export default function PipelinePage() {
                 className="flex items-center gap-1.5 px-3 py-2 bg-white border border-fuchsia-200 rounded-xl text-sm text-fuchsia-700 hover:border-fuchsia-400 hover:bg-fuchsia-50 shadow-sm transition-colors"
               >
                 <Plus className="w-3.5 h-3.5" /> 桌面自動化
+              </button>
+              <button
+                onClick={addVisualValidation}
+                title="新增視覺驗證節點（VLM 看畫面或上一步輸出檔判斷成不成功）"
+                className="flex items-center gap-1.5 px-3 py-2 bg-white border border-indigo-200 rounded-xl text-sm text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50 shadow-sm transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" /> 視覺驗證
               </button>
             </div>
           </Panel>
@@ -1350,7 +1375,7 @@ export default function PipelinePage() {
         )}
 
         {/* Empty state */}
-        {nodes.filter(n => n.type === 'scriptStep' || n.type === 'skillStep' || n.type === 'humanConfirmation' || n.type === 'computerUse').length === 0 && <EmptyState onAdd={addScriptStep} />}
+        {nodes.filter(n => n.type === 'scriptStep' || n.type === 'skillStep' || n.type === 'humanConfirmation' || n.type === 'computerUse' || n.type === 'visualValidation').length === 0 && <EmptyState onAdd={addScriptStep} />}
 
         {/* Node config panel */}
         {selectedNode && selectedNode.type === 'computerUse' ? (
@@ -1372,6 +1397,13 @@ export default function PipelinePage() {
           <AiValidationPanel
             data={selectedNode.data as AiValidationData}
             onUpdate={patch => updateAiNode(selectedNode.id, patch)}
+            onClose={() => setSelectedId(null)}
+            onDelete={() => deleteStep(selectedNode.id)}
+          />
+        ) : selectedNode && selectedNode.type === 'visualValidation' ? (
+          <VisualValidationPanel
+            data={selectedNode.data as VisualValidationData}
+            onUpdate={patch => updateStep(selectedNode.id, patch as Partial<StepData>)}
             onClose={() => setSelectedId(null)}
             onDelete={() => deleteStep(selectedNode.id)}
           />
