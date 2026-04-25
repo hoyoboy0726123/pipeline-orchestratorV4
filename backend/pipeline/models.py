@@ -119,6 +119,15 @@ class ComputerUseAction(BaseModel):
     # 不是讓 VLM 決定座標、不是讓它執行動作；只回傳 {"pass": bool, "reason": str}
     # 模型本身不支援視覺時，呼叫會直接報錯（不靜默 fallback）
     vlm_prompt: str = ""
+    # ── click_image 專用：VLM 輔助模式 ─────────────────────────────
+    # 設計核心：永遠不讓 VLM 給座標 — 它只負責「決定要找的東西」，
+    # 真正的點擊位置由既有的確定性管線（OCR / CV）算出
+    #   "off"           → 不啟用 VLM（預設，走原本 OCR / 座標 / CV 三模）
+    #   "description"   → 把 vlm_prompt 給 VLM，VLM 回螢幕上目標的實際文字 → OCR 找這段文字 → 點中心
+    #   "anchor_pick"   → 把 vlm_anchors 列出的多張變體 + 螢幕送 VLM，VLM 挑哪張最像 → 用該張錨點走標準 CV 比對
+    vlm_mode: str = "off"
+    # anchor_pick 模式的候選錨點圖檔名清單（每張都相對 assets_dir）。off 模式不用。
+    vlm_anchors: list[str] = []
 
 
 class PipelineStep(BaseModel):

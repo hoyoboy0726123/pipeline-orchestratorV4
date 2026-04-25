@@ -290,16 +290,6 @@ def _vlm_judge_screen(prompt: str, region: Optional[tuple[int, int, int, int]],
     """vlm_check 用：把當下螢幕送 Settings 主模型，回 (pass, reason)。
     region 給定就先把截圖裁成該矩形再送 VLM（省 token、聚焦關鍵區域）。
     模型不支援視覺時直接回 (False, 錯誤訊息) — 不靜默 fallback。"""
-    import sys as _sys
-    import base64
-    import cv2
-
-    backend_dir = str(Path(__file__).resolve().parent.parent)
-    if backend_dir not in _sys.path:
-        _sys.path.insert(0, backend_dir)
-    from llm_factory import build_llm
-    from langchain_core.messages import HumanMessage, SystemMessage
-
     screen, ox, oy = _capture_screen()
     if region is not None:
         l, t, w, h = region
@@ -311,41 +301,207 @@ def _vlm_judge_screen(prompt: str, region: Optional[tuple[int, int, int, int]],
             return (False, f"裁切區域 {(l, t, w, h)} 與目前螢幕無交集")
         screen = screen[y:y_end, x:x_end]
 
-    ok, buf = cv2.imencode(".jpg", screen, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-    if not ok:
-        return (False, "螢幕截圖 JPEG encode 失敗")
-    b64 = base64.b64encode(buf.tobytes()).decode()
-
     sys_msg = ("你是 UI 視覺判斷器，看到的圖是螢幕當下狀態。嚴格依使用者描述的條件回 JSON："
                '{"pass": true/false, "reason": "簡短中文說明"}。只回 JSON，不要 markdown、不要其他文字。')
-    user_content = [
-        {"type": "text", "text": f"判斷條件：{prompt}\n請看圖回 JSON。"},
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-    ]
-
+    ok, raw, err = _vlm_call_with_image(f"判斷條件：{prompt}\n請看圖回 JSON。", sys_msg, screen)
+    if not ok:
+        return (False, err)
     try:
-        llm = build_llm(temperature=0)
-        result = llm.invoke([SystemMessage(content=sys_msg), HumanMessage(content=user_content)])
-        raw = (getattr(result, "content", None) or "").strip()
-    except Exception as e:
-        return (False, f"LLM 呼叫失敗（請確認 Settings 選的模型支援視覺）：{e.__class__.__name__}: {e}")
-
-    if not raw:
-        return (False, "LLM 回應為空")
-    if "```" in raw:
-        parts = raw.split("```")
-        if len(parts) >= 2:
-            raw = parts[1].strip()
-            if raw.startswith("json"):
-                raw = raw[4:].strip()
-    try:
-        data = json.loads(raw)
+        data = json.loads(_strip_json_fence(raw))
     except json.JSONDecodeError:
         return (False, f"LLM 回應不是 JSON：{raw[:200]}")
     passed = bool(data.get("pass", False))
     reason = str(data.get("reason") or "").strip() or "(無原因說明)"
     logger.info(f"[vlm_check] pass={passed} reason={reason[:120]}")
     return (passed, reason)
+
+
+def _vlm_call_with_image(messages_text: str, sys_prompt: str,
+                         screen_bgr: np.ndarray) -> tuple[bool, str, str]:
+    """共用的 VLM 帶圖呼叫。回 (ok, raw_response, error_msg)。"""
+    import sys as _sys
+    import base64
+    import cv2
+
+    backend_dir = str(Path(__file__).resolve().parent.parent)
+    if backend_dir not in _sys.path:
+        _sys.path.insert(0, backend_dir)
+    from llm_factory import build_llm
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    ok, buf = cv2.imencode(".jpg", screen_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+    if not ok:
+        return (False, "", "JPEG encode 失敗")
+    b64 = base64.b64encode(buf.tobytes()).decode()
+    user_content = [
+        {"type": "text", "text": messages_text},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+    ]
+    try:
+        llm = build_llm(temperature=0)
+        result = llm.invoke([SystemMessage(content=sys_prompt), HumanMessage(content=user_content)])
+        raw = (getattr(result, "content", None) or "").strip()
+    except Exception as e:
+        return (False, "", f"LLM 呼叫失敗（請確認 Settings 主模型支援視覺）：{e.__class__.__name__}: {e}")
+    if not raw:
+        return (False, "", "LLM 回應為空")
+    return (True, raw, "")
+
+
+def _strip_json_fence(raw: str) -> str:
+    """LLM 常用 ```json...``` 包 JSON。剝掉 fence 給 json.loads。"""
+    if "```" not in raw:
+        return raw.strip()
+    parts = raw.split("```")
+    if len(parts) >= 2:
+        body = parts[1].strip()
+        if body.startswith("json"):
+            body = body[4:].strip()
+        return body
+    return raw.strip()
+
+
+def _vlm_describe_to_text(prompt: str, region: Optional[tuple[int, int, int, int]],
+                          logger: logging.Logger) -> tuple[bool, str, str]:
+    """vlm_mode='description' 用：把螢幕送 VLM，請它告訴我們目標的「實際文字」。
+    座標由後續 OCR 決定（VLM 不負責定位 → 不會點錯位置）。
+    回 (found, target_text, reason)。"""
+    screen, ox, oy = _capture_screen()
+    if region is not None:
+        l, t, w, h = region
+        x = max(0, l - ox)
+        y = max(0, t - oy)
+        x_end = min(screen.shape[1], x + w)
+        y_end = min(screen.shape[0], y + h)
+        if x_end <= x or y_end <= y:
+            return (False, "", f"裁切區域 {(l, t, w, h)} 與螢幕無交集")
+        screen = screen[y:y_end, x:x_end]
+
+    sys_msg = ("你是 UI 視覺助手。看到的圖是螢幕當下狀態。回 JSON："
+               '{"found": true/false, "text": "目標的實際文字", "reason": "簡短說明"}。'
+               'text 必須是螢幕上「實際看得到」的字串（含大小寫和標點），不是描述、不是同義詞。'
+               "只回 JSON。")
+    user_text = (f"使用者描述要點擊的目標：「{prompt}」\n"
+                 "請看圖，找出符合此描述的 UI 元素，告訴我它身上實際顯示的文字（OCR 等下會用此文字定位）。"
+                 "若畫面上找不到此目標，回 found=false。")
+
+    ok, raw, err = _vlm_call_with_image(user_text, sys_msg, screen)
+    if not ok:
+        return (False, "", err)
+    try:
+        data = json.loads(_strip_json_fence(raw))
+    except json.JSONDecodeError:
+        return (False, "", f"VLM 回應不是 JSON：{raw[:200]}")
+    found = bool(data.get("found", False))
+    text = str(data.get("text") or "").strip()
+    reason = str(data.get("reason") or "").strip() or "(無說明)"
+    if found and not text:
+        return (False, "", f"VLM 說 found=true 但 text 為空：{reason}")
+    logger.info(f"[vlm_describe] found={found} text={text!r} reason={reason[:120]}")
+    return (found, text, reason)
+
+
+def _vlm_pick_anchor(prompt: str, anchor_names: list[str], assets_dir: Path,
+                     region: Optional[tuple[int, int, int, int]],
+                     logger: logging.Logger) -> tuple[bool, int, str]:
+    """vlm_mode='anchor_pick' 用：給 VLM 看當下螢幕 + 數張候選錨點圖，請它選最匹配的索引。
+    座標由後續 CV template matching 決定（用 VLM 選出來的那張）。
+    回 (ok, picked_index, reason)。picked_index 是 anchor_names 的下標（0-based）。"""
+    import cv2
+    if not anchor_names:
+        return (False, -1, "anchor_names 為空")
+
+    screen, ox, oy = _capture_screen()
+    if region is not None:
+        l, t, w, h = region
+        x = max(0, l - ox)
+        y = max(0, t - oy)
+        x_end = min(screen.shape[1], x + w)
+        y_end = min(screen.shape[0], y + h)
+        if x_end <= x or y_end <= y:
+            return (False, -1, f"裁切區域 {(l, t, w, h)} 與螢幕無交集")
+        screen = screen[y:y_end, x:x_end]
+
+    # 把所有錨點圖橫向拼成一張條狀圖、上方標 [0]、[1]、... 讓 VLM 看圖選號碼
+    # （比一次傳多張圖更穩；許多視覺模型對單一 image_url 反應比較可靠）
+    anchor_imgs = []
+    for name in anchor_names:
+        p = assets_dir / name
+        if not p.is_file():
+            return (False, -1, f"錨點圖不存在：{name}")
+        data = p.read_bytes()
+        arr = np.frombuffer(data, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is None:
+            return (False, -1, f"錨點圖 decode 失敗：{name}")
+        anchor_imgs.append(img)
+
+    # 全部 padded 到同高度然後加 label 條
+    LABEL_H = 28
+    target_h = max(im.shape[0] for im in anchor_imgs)
+    strip_pieces = []
+    for i, im in enumerate(anchor_imgs):
+        h, w = im.shape[:2]
+        if h < target_h:
+            pad = np.full((target_h - h, w, 3), 255, dtype=np.uint8)
+            im = np.vstack([im, pad])
+        label_bar = np.full((LABEL_H, im.shape[1], 3), 30, dtype=np.uint8)
+        cv2.putText(label_bar, f"[{i}]", (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        strip_pieces.append(np.vstack([label_bar, im]))
+        # 每張之間 8 px 白色分隔
+        sep = np.full((target_h + LABEL_H, 8, 3), 200, dtype=np.uint8)
+        strip_pieces.append(sep)
+    strip_pieces.pop()  # 去掉最後一個分隔
+    anchors_strip = np.hstack(strip_pieces)
+
+    # 螢幕 + 錨點條垂直拼接，加上「SCREEN」「ANCHORS」標頭
+    def _header(text: str, width: int) -> np.ndarray:
+        bar = np.full((LABEL_H, width, 3), 60, dtype=np.uint8)
+        cv2.putText(bar, text, (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6, (255, 255, 255), 1, cv2.LINE_AA)
+        return bar
+
+    sw = screen.shape[1]
+    aw = anchors_strip.shape[1]
+    target_w = max(sw, aw)
+    if sw < target_w:
+        pad = np.full((screen.shape[0], target_w - sw, 3), 255, dtype=np.uint8)
+        screen = np.hstack([screen, pad])
+    if aw < target_w:
+        pad = np.full((anchors_strip.shape[0], target_w - aw, 3), 255, dtype=np.uint8)
+        anchors_strip = np.hstack([anchors_strip, pad])
+    composite = np.vstack([
+        _header("SCREEN", target_w), screen,
+        _header("ANCHORS (pick one)", target_w), anchors_strip,
+    ])
+
+    sys_msg = ("你是 UI 視覺判斷器。圖分上下兩段：上段是螢幕當下，下段是數個候選錨點（按 [0][1][2]...編號）。"
+               '請選一張最像螢幕上「使用者描述目標」當下狀態的錨點。回 JSON：'
+               '{"index": 整數, "reason": "簡短說明"}。'
+               "若沒有任何錨點符合（全都不像螢幕當下），回 index=-1。只回 JSON。")
+    user_text = (f"使用者描述目標：「{prompt}」\n"
+                 f"候選錨點數：{len(anchor_names)}（編號 0 到 {len(anchor_names) - 1}）\n"
+                 "請選哪一個錨點最接近螢幕當下要點擊的目標。")
+
+    ok, raw, err = _vlm_call_with_image(user_text, sys_msg, composite)
+    if not ok:
+        return (False, -1, err)
+    try:
+        data = json.loads(_strip_json_fence(raw))
+    except json.JSONDecodeError:
+        return (False, -1, f"VLM 回應不是 JSON：{raw[:200]}")
+    try:
+        idx = int(data.get("index", -1))
+    except (TypeError, ValueError):
+        return (False, -1, f"VLM 回的 index 不是整數：{data}")
+    reason = str(data.get("reason") or "").strip() or "(無說明)"
+    if idx < 0:
+        return (False, -1, f"VLM 沒有選到任何錨點：{reason}")
+    if idx >= len(anchor_names):
+        return (False, -1, f"VLM 選的 index={idx} 超出範圍（只有 {len(anchor_names)} 張）")
+    logger.info(f"[vlm_pick] picked [{idx}] {anchor_names[idx]} reason={reason[:120]}")
+    return (True, idx, reason)
 
 
 def _pyautogui_with_failsafe():
@@ -442,20 +598,87 @@ def execute_action(
             modifiers = list(action.get("modifiers", []) or [])
             mods_tag = f"[{'+'.join(modifiers)}]" if modifiers else ""
 
-            # 三種 primary mode 獨立互不 coupling（per user feedback），但執行時還是要
-            # 有優先順序。直覺是「使用者明確勾起來的 mode 優先」：
-            #   OCR 勾起 + 有 ocr_text → 走 OCR（不管 use_coord 是 true/false）
-            #   OCR 沒勾 + use_coord=true → 走絕對座標
-            #   OCR 沒勾 + use_coord=false → 走 CV 圖像比對
-            # 先讀 OCR 旗標，再決定是否短路到座標模式
+            # 四種 primary mode（user-feedback 排序，VLM 永遠最高優先因為使用者明確開了它）：
+            #   vlm_mode=description → VLM 看圖回「目標的實際文字」→ OCR 找文字 → 點中心
+            #   vlm_mode=anchor_pick → VLM 從多張候選錨點挑一張最像螢幕當下的 → 用該張走 CV 比對
+            #   use_ocr 勾起 + 有 ocr_text → 走 OCR
+            #   use_ocr 沒勾 + use_coord=true → 走絕對座標
+            #   use_ocr 沒勾 + use_coord=false → 走 CV 圖像比對
+            # VLM 永遠不直接給座標 — 它只負責「決定要找的東西」，避開 VLM 點錯位置的問題
+            vlm_mode = (action.get("vlm_mode") or "off").lower()
             use_ocr = bool(action.get("use_ocr", False))
             ocr_text = (action.get("ocr_text") or "").strip()
             ocr_will_run = use_ocr and bool(ocr_text)
 
+            # ── VLM 模式 1：description → OCR ──
+            if vlm_mode == "description":
+                vlm_prompt_click = (action.get("vlm_prompt") or action.get("description") or "").strip()
+                if not vlm_prompt_click:
+                    return ActionResult(False, index, atype,
+                        "vlm_mode=description 但 vlm_prompt 為空（必填）")
+                region_rect_v = _parse_search_region(action)
+                vlm_found, vlm_text, vlm_reason = _vlm_describe_to_text(vlm_prompt_click, region_rect_v, logger)
+                if not vlm_found:
+                    return ActionResult(False, index, atype,
+                        f"VLM 在螢幕找不到目標：{vlm_reason}")
+                # 用 VLM 給的文字跑 OCR 找實際座標（VLM 不給座標 — 由 OCR 確定性決定）
+                find_text_on_screen = None
+                try:
+                    from pipeline.ocr import find_text_on_screen
+                except Exception:
+                    try:
+                        from .ocr import find_text_on_screen  # type: ignore
+                    except Exception as _e:
+                        return ActionResult(False, index, atype,
+                            f"VLM 給了文字 '{vlm_text}' 但 OCR 模組載不進來：{_e}")
+                screen_bgr_v, sxv, syv = _capture_screen()
+                near_v = (int(fx), int(fy)) if has_coord else None
+                ocr_res_v = find_text_on_screen(
+                    screen_bgr_v, vlm_text, origin_x=sxv, origin_y=syv,
+                    lang_tag="zh-Hant-TW", near_xy=near_v,
+                    search_radius=cv_search_radius, threshold=ocr_threshold,
+                    region=region_rect_v,
+                )
+                if not ocr_res_v.found:
+                    return ActionResult(False, index, atype,
+                        f"VLM 看到目標文字是 '{vlm_text}'（{vlm_reason}），但 OCR 在螢幕上找不到：{ocr_res_v.reason}")
+                _do_click(pg, ocr_res_v.center[0], ocr_res_v.center[1],
+                          button, clicks, hold_sec, modifiers)
+                hold_tag_v = f" hold={hold_sec}s" if hold_sec > 0.1 else ""
+                msg = (f"{mods_tag} VLM→OCR 點擊 '{vlm_text}' @ {ocr_res_v.center} "
+                       f"(VLM: {vlm_reason[:60]}, OCR conf={ocr_res_v.confidence:.2f}){hold_tag_v}")
+                duration = int((time.time() - t0) * 1000)
+                logger.info(f"[computer_use]   ✓ {msg}（{duration}ms）")
+                return ActionResult(True, index, atype, msg, duration)
+
+            # ── VLM 模式 2：anchor_pick → 用挑出的錨點走 CV ──
+            if vlm_mode == "anchor_pick":
+                anchor_names = list(action.get("vlm_anchors") or [])
+                if not anchor_names:
+                    return ActionResult(False, index, atype,
+                        "vlm_mode=anchor_pick 但 vlm_anchors 為空（必填，至少 2 張變體錨點圖檔名）")
+                vlm_prompt_pick = (action.get("vlm_prompt") or action.get("description") or "").strip()
+                if not vlm_prompt_pick:
+                    return ActionResult(False, index, atype,
+                        "vlm_mode=anchor_pick 但 vlm_prompt 為空（必填，告訴 VLM 要點什麼）")
+                region_rect_p = _parse_search_region(action)
+                ok_pick, picked_idx, pick_reason = _vlm_pick_anchor(
+                    vlm_prompt_pick, anchor_names, assets_dir, region_rect_p, logger)
+                if not ok_pick:
+                    return ActionResult(False, index, atype,
+                        f"VLM 無法挑錨點：{pick_reason}")
+                # 用挑出來的錨點走標準 CV template matching（重新指向 tpl_path）
+                picked_name = anchor_names[picked_idx]
+                tpl_path = assets_dir / picked_name
+                logger.info(f"[computer_use]   VLM 挑了錨點 [{picked_idx}] {picked_name}（{pick_reason[:80]}）→ 走 CV 比對")
+                # 不 return — 讓控制流繼續往下走 CV 路徑（vlm_mode 短路掉 OCR 模式）
+                ocr_will_run = False  # 確定要走 CV 不走 OCR
+
             # 預設使用絕對座標（快速且穩定）；只有使用者主動切到圖像比對模式才跑 template matching
             # 注意：get 第二引數 True 表示若 action 根本沒 use_coord 欄位，也視為座標模式
             # OCR 有啟用就跳過座標短路，讓 OCR 先試（失敗再依 ocr_cv_fallback 決定退不退）
-            if action.get("use_coord", True) and has_coord and not ocr_will_run:
+            # vlm_mode=anchor_pick 要走 CV，必須跳過座標短路
+            if vlm_mode != "anchor_pick" and action.get("use_coord", True) and has_coord and not ocr_will_run:
                 _do_click(pg, int(fx), int(fy), button, clicks, hold_sec, modifiers)
                 hold_tag = f" hold={hold_sec}s" if hold_sec > 0.1 else ""
                 msg = f"[強制座標]{mods_tag} 點擊 ({fx},{fy}) button={button} clicks={clicks}{hold_tag}"
@@ -1156,6 +1379,13 @@ def validate_action_assets(actions: list[dict], assets_dir: Path) -> list[str]:
                 continue
             for key in ("image", "image2"):
                 name = a.get(key) or ""
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                if not (assets_dir / name).is_file():
+                    missing.append(name)
+            # vlm_mode=anchor_pick 用的多張候選錨點圖也要檢查
+            for name in (a.get("vlm_anchors") or []):
                 if not name or name in seen:
                     continue
                 seen.add(name)
