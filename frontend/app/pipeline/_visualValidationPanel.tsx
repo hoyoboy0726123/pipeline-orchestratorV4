@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { X, MousePointerSquare, Trash2 } from 'lucide-react'
+import { X, MousePointerSquareDashed, Trash2 } from 'lucide-react'
 import type { VisualValidationData } from './_helpers'
 import ScreenRegionPicker from './_screenRegionPicker'
 
@@ -151,7 +151,7 @@ export default function VisualValidationPanel({ data, onUpdate, onClose, onDelet
                 onClick={() => setShowPicker(true)}
                 className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-white border-2 border-dashed border-indigo-300 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 transition-colors"
               >
-                <MousePointerSquare className="w-4 h-4" />
+                <MousePointerSquareDashed className="w-4 h-4" />
                 從螢幕上拉一塊區域
               </button>
             )}
