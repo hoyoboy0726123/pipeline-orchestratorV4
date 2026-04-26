@@ -1206,9 +1206,18 @@ async def execute_step_with_skill(
                 import time as _time
                 t0 = _time.time()
                 loop = asyncio.get_event_loop()
-                tool_result = await loop.run_in_executor(
-                    None, lambda: _skill_run_python(cached["code"], cwd=working_dir, run_id=run_id)
-                )
+                # 修：原本直呼叫 _skill_run_python（host subprocess）會把 /mnt/c/... 沙盒路徑
+                # 丟到 Windows 跑 → 找不到檔 → recipe 一直 fail 重學。
+                # 改走 _try_sandbox_exec 先判斷沙盒可用性，可用就用沙盒（原本錄製就是在沙盒）；
+                # 沙盒不可用才退 host（這時 LLM 重學會學到 host 路徑、新 recipe 自洽）
+                def _replay_recipe():
+                    sandbox_out = _try_sandbox_exec(
+                        "run_python", cached["code"], working_dir, run_id, logger
+                    )
+                    if sandbox_out is not None:
+                        return sandbox_out
+                    return _skill_run_python(cached["code"], cwd=working_dir, run_id=run_id)
+                tool_result = await loop.run_in_executor(None, _replay_recipe)
                 runtime = _time.time() - t0
                 # 成功條件：輸出檔存在（若有指定）且無 [exit code: X]
                 ok = "[exit code:" not in tool_result
