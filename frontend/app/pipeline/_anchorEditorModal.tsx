@@ -377,37 +377,85 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
   }, [imgLoaded, box, fullLeft, fullTop])
 
   // 滑鼠事件處理（Canvas 相對座標 → 世界座標；已透過 worldToCanvas/canvasToWorld 考慮 viewRect）
+  // 多框並存時：以「點到哪個框就拖哪個」為原則，自動決定。priority 由小到大：
+  //   1. 紅十字（最小、最具體）— 12px 範圍內
+  //   2. 綠框 / 藍框（中等）— 內部或四角 handle
+  //   3. 橘框（最大、整體背景）— 內部或四角 handle
+  // anchor 分頁（綠+橘並存）會 auto-set anchorTarget，sub-toggle 只是指示狀態
   const onMouseDown = (e: React.MouseEvent) => {
     const rect = canvasRef.current!.getBoundingClientRect()
     const cx = e.clientX - rect.left
     const cy = e.clientY - rect.top
-    // 紅十字優先判斷（在框內但靠近紅十字時優先拖紅十字）
+
+    // helper：檢查某個 box 是否被命中（near TL / near BR / inside）
+    const hit = (b: { left: number; top: number; width: number; height: number }) => {
+      const { cx: bx, cy: by } = worldToCanvas(b.left, b.top)
+      const bw = b.width * displayScale
+      const bh = b.height * displayScale
+      const tl = Math.abs(cx - bx) < 10 && Math.abs(cy - by) < 10
+      const br = Math.abs(cx - (bx + bw)) < 10 && Math.abs(cy - (by + bh)) < 10
+      const inside = cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh
+      if (tl) return 'resize-tl' as const
+      if (br) return 'resize-br' as const
+      if (inside) return 'move' as const
+      return null
+    }
+
+    // 1. 紅十字（最高優先）
     const { cx: crossX, cy: crossY } = worldToCanvas(clickPos.x, clickPos.y)
-    const nearCross = Math.abs(cx - crossX) < 12 && Math.abs(cy - crossY) < 12
-    // anchor 分頁依 anchorTarget 決定拖綠框還是橘框；ocr 分頁固定拖藍框
-    const activeBox = editMode === 'ocr' ? ocrBox
-                    : (editMode === 'anchor' && anchorTarget === 'orange') ? cvBox
-                    : box
-    const { cx: bx, cy: by } = worldToCanvas(activeBox.left, activeBox.top)
-    const bw = activeBox.width * displayScale
-    const bh = activeBox.height * displayScale
-    const nearTL = Math.abs(cx - bx) < 10 && Math.abs(cy - by) < 10
-    const nearBR = Math.abs(cx - (bx + bw)) < 10 && Math.abs(cy - (by + bh)) < 10
-    const inside = cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh
-    let mode: typeof dragMode = 'none'
-    if (nearCross) mode = 'move-click'
-    else if (nearTL) mode = 'resize-tl'
-    else if (nearBR) mode = 'resize-br'
-    else if (inside) mode = 'move'
-    if (mode === 'none') return
-    setDragMode(mode)
+    if (Math.abs(cx - crossX) < 12 && Math.abs(cy - crossY) < 12) {
+      setDragMode('move-click')
+      dragRef.current = {
+        startX: cx, startY: cy,
+        boxLeft: 0, boxTop: 0, boxW: 0, boxH: 0,
+        clickX: clickPos.x, clickY: clickPos.y,
+      }
+      e.preventDefault()
+      return
+    }
+
+    // 2. 內框（綠 / 藍）— 比外框優先
+    let pickedBox: { left: number; top: number; width: number; height: number } | null = null
+    let pickedSetter: typeof setBox | typeof setOcrBox | typeof setCvBox | null = null
+    let pickedMode: 'move' | 'resize-tl' | 'resize-br' | null = null
+    let switchTarget: 'green' | 'orange' | null = null
+
+    if (editMode === 'ocr') {
+      const m = hit(ocrBox)
+      if (m) { pickedBox = ocrBox; pickedSetter = setOcrBox; pickedMode = m }
+    } else {
+      // anchor 分頁：先試綠框（內、小、優先）
+      const mGreen = hit(box)
+      if (mGreen) {
+        pickedBox = box; pickedSetter = setBox; pickedMode = mGreen
+        switchTarget = 'green'
+      } else {
+        // 綠框沒中 → 試橘框（外、大）
+        const mOrange = hit(cvBox)
+        if (mOrange) {
+          pickedBox = cvBox; pickedSetter = setCvBox; pickedMode = mOrange
+          switchTarget = 'orange'
+        }
+      }
+    }
+
+    if (!pickedBox || !pickedMode) return
+    // 自動切 sub-toggle 顯示「目前在拖什麼」+ 拖橘框時 mark customized
+    if (switchTarget && switchTarget !== anchorTarget) setAnchorTarget(switchTarget)
+    if (switchTarget === 'orange' && !cvCustomized) setCvCustomized(true)
+
+    setDragMode(pickedMode)
+    // 把選中的 setter 暫存到 ref（onMouseMove 要用）
+    pickedSetterRef.current = pickedSetter
     dragRef.current = {
       startX: cx, startY: cy,
-      boxLeft: activeBox.left, boxTop: activeBox.top, boxW: activeBox.width, boxH: activeBox.height,
+      boxLeft: pickedBox.left, boxTop: pickedBox.top, boxW: pickedBox.width, boxH: pickedBox.height,
       clickX: clickPos.x, clickY: clickPos.y,
     }
     e.preventDefault()
   }
+  // onMouseDown 選中的 setter 帶到 onMouseMove；不能用 useState 因為要立即生效
+  const pickedSetterRef = useRef<typeof setBox | typeof setOcrBox | typeof setCvBox | null>(null)
 
   const onMouseMove = (e: React.MouseEvent) => {
     if (dragMode === 'none') return
@@ -423,13 +471,9 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
       })
       return
     }
-    const setter = editMode === 'ocr' ? setOcrBox
-                 : (editMode === 'anchor' && anchorTarget === 'orange') ? setCvBox
-                 : setBox
-    // 拖橘框 = 自訂 CV 搜尋範圍，套用時要寫進 search_region
-    if (editMode === 'anchor' && anchorTarget === 'orange' && !cvCustomized) {
-      setCvCustomized(true)
-    }
+    // 用 onMouseDown 選中的那個 setter（單一真相來源，不再依賴 anchorTarget 推導）
+    const setter = pickedSetterRef.current
+    if (!setter) return
     if (dragMode === 'move') {
       setter(b => ({ ...b, left: dragRef.current.boxLeft + Math.round(dx), top: dragRef.current.boxTop + Math.round(dy) }))
     } else if (dragMode === 'resize-br') {
@@ -666,25 +710,22 @@ export default function AnchorEditorModal({ action, actionIndex, assetsDir, defa
           <div className="w-72 border-l border-gray-200 flex flex-col p-4 space-y-3 overflow-y-auto">
             {editMode === 'anchor' ? (
               <>
-                {/* 子目標切換：拖綠框錨點 vs 拖橘框搜尋範圍（合併原本第三分頁進來） */}
+                {/* 顯示「上次拖了哪個框」當狀態指示。點哪個框就拖哪個（不用先切這） */}
                 <div className="flex items-center gap-0 border border-gray-200 rounded-lg overflow-hidden text-xs">
-                  <button
-                    onClick={() => setAnchorTarget('green')}
-                    className={`flex-1 px-2 py-1.5 transition-colors ${
-                      anchorTarget === 'green'
-                        ? 'bg-emerald-500 text-white font-semibold'
-                        : 'bg-white text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >🟩 拖綠框（錨點）</button>
-                  <button
-                    onClick={() => setAnchorTarget('orange')}
-                    className={`flex-1 px-2 py-1.5 transition-colors ${
-                      anchorTarget === 'orange'
-                        ? 'bg-orange-500 text-white font-semibold'
-                        : 'bg-white text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >🟧 拖橘框（搜尋範圍）</button>
+                  <div className={`flex-1 px-2 py-1.5 text-center ${
+                    anchorTarget === 'green'
+                      ? 'bg-emerald-500 text-white font-semibold'
+                      : 'bg-white text-gray-500'
+                  }`}>🟩 綠框（錨點）{anchorTarget === 'green' ? ' · 上次拖' : ''}</div>
+                  <div className={`flex-1 px-2 py-1.5 text-center ${
+                    anchorTarget === 'orange'
+                      ? 'bg-orange-500 text-white font-semibold'
+                      : 'bg-white text-gray-500'
+                  }`}>🟧 橘框（搜尋範圍）{anchorTarget === 'orange' ? ' · 上次拖' : ''}</div>
                 </div>
+                <p className="text-[11px] text-gray-500 -mt-1">
+                  💡 直接點哪個框就拖哪個。綠框優先（重疊時），點到綠框外的橘框區域就拖橘框
+                </p>
 
                 {anchorTarget === 'green' ? (
                   <>
