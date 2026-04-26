@@ -963,7 +963,7 @@ function SandboxSection() {
           <Shield className="w-5 h-5 text-indigo-700" />
         </div>
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Skill 沙盒（V3）</h2>
+          <h2 className="text-lg font-semibold text-gray-900">Skill 沙盒（V4）</h2>
           <p className="text-sm text-gray-500">LLM 生成的 Python / Shell 程式碼要在哪裡執行</p>
         </div>
       </div>
