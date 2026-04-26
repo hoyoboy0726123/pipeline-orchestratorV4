@@ -133,7 +133,7 @@ class MatchResult:
 
 def find_template(
     template_path: str,
-    threshold: float = 0.85,
+    threshold: float = 0.5,
     multi_scale: bool = True,
     near_xy: Optional[tuple[int, int]] = None,
     search_radius: int = 400,
@@ -599,7 +599,7 @@ def execute_action(
             if not img_name:
                 return ActionResult(False, index, atype, "click_image 缺 image 欄位")
             tpl_path = assets_dir / img_name
-            # 門檻：action-level confidence 覆蓋 step 層級 cv_threshold，皆缺就用 0.65
+            # 門檻：action-level confidence 覆蓋 step 層級 cv_threshold，皆缺就用 0.5
             threshold = float(action.get("confidence") or cv_threshold)
             button = action.get("button", "left")
             clicks = int(action.get("clicks", 1))
@@ -963,7 +963,8 @@ def execute_action(
                 return ActionResult(False, index, atype, "wait_image 缺 image 欄位")
             tpl_path = assets_dir / img_name
             timeout = float(action.get("timeout_sec", 10.0))
-            threshold = float(action.get("confidence", 0.85))
+            # action.confidence 沒設或為 0 → 退步驟層級 cv_threshold（跟 click_image 一致）
+            threshold = float(action.get("confidence") or cv_threshold)
             region_rect = _parse_search_region(action)
             deadline = time.time() + timeout
             last_conf = 0.0
