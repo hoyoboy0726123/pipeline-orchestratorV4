@@ -552,13 +552,13 @@ def execute_action(
     logger: logging.Logger,
     run_id: Optional[str] = None,
     allow_coord_fallback: bool = True,
-    cv_threshold: float = 0.65,
+    cv_threshold: float = 0.5,
     cv_search_only_near: bool = False,
     cv_search_radius: int = 400,
     cv_trigger_hover: bool = True,
     cv_hover_wait_ms: int = 200,
     cv_coord_fallback: bool = False,
-    ocr_threshold: float = 0.5,
+    ocr_threshold: float = 0.6,
     ocr_cv_fallback: bool = False,
     _depth: int = 0,
 ) -> ActionResult:
@@ -1490,13 +1490,13 @@ def execute_computer_use_step(
     logger: logging.Logger,
     run_id: Optional[str] = None,
     fail_fast: bool = True,
-    cv_threshold: float = 0.65,
+    cv_threshold: float = 0.5,
     cv_search_only_near: bool = False,
     cv_search_radius: int = 400,
     cv_trigger_hover: bool = True,
     cv_hover_wait_ms: int = 200,
     cv_coord_fallback: bool = False,
-    ocr_threshold: float = 0.5,
+    ocr_threshold: float = 0.6,
     ocr_cv_fallback: bool = False,
 ) -> StepResult:
     """執行一整個 computer_use 步驟。
@@ -1504,7 +1504,7 @@ def execute_computer_use_step(
     - actions: ComputerUseAction 物件的 list of dict
     - assets_dir: 錨點圖片資料夾（絕對路徑，通常是 ai_output/<name>/ 下的子資料夾）
     - fail_fast: True 則遇到失敗立刻中止；False 則繼續但記錄失敗數
-    - cv_threshold: CV 比對門檻（0.65 寬鬆 / 0.80 標準 / 0.90 嚴格）
+    - cv_threshold: CV 比對門檻（0.50 寬鬆 / 0.80 標準 / 0.90 嚴格）
     - cv_search_only_near: True = 只搜錄製座標附近、找不到直接 FAIL（不退回全螢幕也不退回座標）
     - cv_search_radius: 附近搜尋半徑（像素）；實際搜尋範圍 (2r × 2r)
     - cv_trigger_hover: True = 比對前先 moveTo(錄製座標) + 200ms 讓 Windows hover 效果出現

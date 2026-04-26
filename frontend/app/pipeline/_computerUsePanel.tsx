@@ -610,7 +610,7 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
                     : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex-1">CV 比對設定</span>
             <span className="text-[11px] text-gray-400 font-mono">
-              {(data.cvThreshold ?? 0.65)}{data.cvSearchOnlyNear ? ' · 只搜附近' : ''}{(data.cvTriggerHover ?? true) ? ` · hover ${data.cvHoverWaitMs ?? 200}ms` : ''}
+              {(data.cvThreshold ?? 0.5)}{data.cvSearchOnlyNear ? ' · 只搜附近' : ''}{(data.cvTriggerHover ?? true) ? ` · hover ${data.cvHoverWaitMs ?? 200}ms` : ''}
             </span>
           </button>
           {cvOpen && (
@@ -621,7 +621,7 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
                 <label className="text-xs text-gray-600 block mb-1.5">比對門檻</label>
                 <div className="grid grid-cols-3 gap-1">
                   {[
-                    { v: 0.65, label: '寬鬆', hint: '容錯高，DPI 差異容忍' },
+                    { v: 0.50, label: '寬鬆', hint: '容錯高，DPI / 主題色 / hover 差異容忍' },
                     { v: 0.80, label: '標準', hint: '預設 sweet spot' },
                     { v: 0.90, label: '嚴格', hint: '幾乎不誤判' },
                   ].map(opt => (
@@ -631,7 +631,7 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
                       onClick={() => onUpdate({ cvThreshold: opt.v })}
                       title={opt.hint}
                       className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
-                        (data.cvThreshold ?? 0.65) === opt.v
+                        (data.cvThreshold ?? 0.5) === opt.v
                           ? 'bg-purple-500 text-white border-purple-500'
                           : 'bg-white text-gray-600 border-gray-200 hover:border-purple-300'
                       }`}
@@ -747,7 +747,7 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
                     : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex-1">🔤 OCR 比對設定</span>
             <span className="text-[11px] text-gray-400 font-mono">
-              門檻 {(data.ocrThreshold ?? 0.5).toFixed(2)}{data.ocrCvFallback ? ' · fallback→CV' : ''}
+              門檻 {(data.ocrThreshold ?? 0.6).toFixed(2)}{data.ocrCvFallback ? ' · fallback→CV' : ''}
             </span>
           </button>
           {ocrOpen && (
@@ -758,7 +758,7 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
                 <label className="text-xs text-gray-600 block mb-1.5">最小匹配信心</label>
                 <div className="grid grid-cols-4 gap-1">
                   {[
-                    { v: 0.5, label: '模糊', hint: '包含大小寫+去空白的模糊匹配（最寬）' },
+                    { v: 0.6, label: '模糊', hint: '包含大小寫+去空白的模糊匹配（最寬）' },
                     { v: 0.8, label: '跨詞', hint: '允許 CJK 被 OCR 拆字後行層級拼接匹配' },
                     { v: 0.9, label: '詞包含', hint: '目標必須是某個 OCR word 的子字串' },
                     { v: 1.0, label: '精確', hint: 'OCR word 必須完全等於目標文字' },
@@ -769,7 +769,7 @@ export default function ComputerUsePanel({ node, pipelineName, onUpdate, onClose
                       onClick={() => onUpdate({ ocrThreshold: opt.v })}
                       title={opt.hint}
                       className={`px-2 py-1.5 rounded-lg text-[11px] font-medium transition-colors border ${
-                        (data.ocrThreshold ?? 0.5) === opt.v
+                        (data.ocrThreshold ?? 0.6) === opt.v
                           ? 'bg-purple-500 text-white border-purple-500'
                           : 'bg-white text-gray-600 border-gray-200 hover:border-purple-300'
                       }`}
