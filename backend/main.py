@@ -29,7 +29,8 @@ app = FastAPI(title="Pipeline Orchestrator", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3003", "http://127.0.0.1:3003",
+    allow_origins=["http://localhost:3004", "http://127.0.0.1:3004",  # V4 dev port
+                   "http://localhost:3003", "http://127.0.0.1:3003",
                    "http://localhost:3002", "http://127.0.0.1:3002",
                    "http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
