@@ -173,8 +173,8 @@ class PipelineStep(BaseModel):
     cv_hover_wait_ms: int = 200    # hover 等待時間：200（快）/ 400（保險，Windows 部分動畫較慢）
     cv_coord_fallback: bool = False # True = CV 完全找不到時退回錄製座標硬點下去；False（預設）= 失敗就 FAIL 不亂點
     # ── OCR 比對設定 ──────────────────────────────────────────────────
-    ocr_threshold: float = 0.6     # OCR 最小 confidence：低於這數字視為沒匹配到
-                                   # 分級: 1.0 精確 / 0.9 target⊆word / 0.8 跨詞行層級 / 0.6 模糊
+    ocr_threshold: float = 0.5     # OCR 最小 confidence：低於這數字視為沒匹配到
+                                   # 分級: 1.0 精確 / 0.9 target⊆word / 0.8 跨詞行層級 / 0.5 模糊
     ocr_cv_fallback: bool = False  # True = OCR 失敗時退到 CV 比對鏈（再受 cv_coord_fallback 接棒）；False（預設）= 失敗就 FAIL
     # ── 視覺驗證節點（visual_validation）─────────────────────────────
     # 獨立節點類型：不執行命令，純判斷。3 種來源餵給 Settings 主模型（必須支援視覺）：

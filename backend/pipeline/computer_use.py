@@ -558,7 +558,7 @@ def execute_action(
     cv_trigger_hover: bool = True,
     cv_hover_wait_ms: int = 200,
     cv_coord_fallback: bool = False,
-    ocr_threshold: float = 0.6,
+    ocr_threshold: float = 0.5,
     ocr_cv_fallback: bool = False,
     _depth: int = 0,
 ) -> ActionResult:
@@ -1496,7 +1496,7 @@ def execute_computer_use_step(
     cv_trigger_hover: bool = True,
     cv_hover_wait_ms: int = 200,
     cv_coord_fallback: bool = False,
-    ocr_threshold: float = 0.6,
+    ocr_threshold: float = 0.5,
     ocr_cv_fallback: bool = False,
 ) -> StepResult:
     """執行一整個 computer_use 步驟。

@@ -29,7 +29,7 @@ export interface StepData extends Record<string, unknown> {
   cvTriggerHover?: boolean               // true = 比對前先觸發 hover 效果（匹配錄製時的 hover 狀態）
   cvHoverWaitMs?: number                 // hover 等待時間（ms）：200 或 400
   cvCoordFallback?: boolean              // true = CV 失敗時退回錄製座標硬點（預設 false = 失敗就停）
-  ocrThreshold?: number                  // OCR 最小 conf 門檻（預設 0.6）
+  ocrThreshold?: number                  // OCR 最小 conf 門檻（預設 0.5）
   ocrCvFallback?: boolean                // true = OCR 失敗接著 CV 比對（預設 false = 失敗就停）
   // 視覺驗證節點（visual_validation）
   visualValidation?: boolean             // optional — 視覺驗證步驟
@@ -150,7 +150,7 @@ export interface ComputerUseData extends Record<string, unknown> {
   cvTriggerHover: boolean   // true = 比對前先 moveTo 錄製座標觸發 hover
   cvHoverWaitMs: number     // hover 等待 ms：200（快）/ 400（保險）
   cvCoordFallback: boolean  // true = CV 失敗時退回錄製座標硬點。預設 false（失敗就停，不亂點）
-  ocrThreshold: number      // OCR 最小 conf 門檻（1.0/0.9/0.8/0.6 分級；預設 0.6）
+  ocrThreshold: number      // OCR 最小 conf 門檻（1.0/0.9/0.8/0.5 分級；預設 0.5）
   ocrCvFallback: boolean    // true = OCR 失敗時繼續試 CV 比對鏈。預設 false（失敗就停）
   timeout: number           // 秒（執行上限）
   retry: number
@@ -227,7 +227,7 @@ export function newComputerUseData(index = 0): ComputerUseData {
     cvTriggerHover: true,
     cvHoverWaitMs: 200,
     cvCoordFallback: false,
-    ocrThreshold: 0.6,
+    ocrThreshold: 0.5,
     ocrCvFallback: false,
     timeout: 300,
     retry: 0,
@@ -297,7 +297,7 @@ export function stepsToFlow(steps: StepData[]): { nodes: AppNode[]; edges: Edge[
           cvTriggerHover: s.cvTriggerHover ?? true,
           cvHoverWaitMs: s.cvHoverWaitMs ?? 200,
           cvCoordFallback: s.cvCoordFallback ?? false,
-          ocrThreshold: s.ocrThreshold ?? 0.6,
+          ocrThreshold: s.ocrThreshold ?? 0.5,
           ocrCvFallback: s.ocrCvFallback ?? false,
           timeout: s.timeout,
           retry: s.retry,
@@ -609,7 +609,7 @@ export function stepsToYaml(name: string, steps: StepData[]): string {
       if (s.cvHoverWaitMs !== undefined && s.cvHoverWaitMs !== 200) lines.push(`    cv_hover_wait_ms: ${s.cvHoverWaitMs}`)
       // cv_coord_fallback 預設 false → 只在 true 時寫入
       if (s.cvCoordFallback === true) lines.push(`    cv_coord_fallback: true`)
-      if (s.ocrThreshold !== undefined && s.ocrThreshold !== 0.6) lines.push(`    ocr_threshold: ${s.ocrThreshold}`)
+      if (s.ocrThreshold !== undefined && s.ocrThreshold !== 0.5) lines.push(`    ocr_threshold: ${s.ocrThreshold}`)
       if (s.ocrCvFallback === true) lines.push(`    ocr_cv_fallback: true`)
       if (s.computerUseActions && s.computerUseActions.length > 0) {
         // 以 JSON 陣列寫入 actions（一行一動作，夠精簡又能 yaml parse）
