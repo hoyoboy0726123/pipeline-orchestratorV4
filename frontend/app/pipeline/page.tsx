@@ -741,8 +741,11 @@ export default function PipelinePage() {
     const stepNodes = nodes.filter(n => n.type === 'scriptStep' || n.type === 'skillStep' || n.type === 'humanConfirmation' || n.type === 'computerUse' || n.type === 'visualValidation')
     if (stepNodes.length === 0) { toast.error('請先新增步驟'); return }
     const steps = flowToSteps(nodes, edges)
-    // computer_use 節點用 actions 而非 batch；人工確認也不需要 batch
-    const emptyStep = steps.find(s => !s.batch?.trim() && !s.humanConfirm && !s.computerUse)
+    // 空步驟檢查：排除有自己 schema 的節點類型（不靠 batch 跑的）
+    //   computer_use / human_confirm / visual_validation 都不需要 batch，自有檢查
+    const emptyStep = steps.find(s =>
+      !s.batch?.trim() && !s.humanConfirm && !s.computerUse && !s.visualValidation
+    )
     if (emptyStep) {
       toast.error(`步驟「${emptyStep.name}」尚未設定${emptyStep.skillMode ? '任務描述' : '執行指令'}，請點擊該步驟方塊填入`)
       return
@@ -751,6 +754,12 @@ export default function PipelinePage() {
     const emptyCu = steps.find(s => s.computerUse && (!s.computerUseActions || s.computerUseActions.length === 0))
     if (emptyCu) {
       toast.error(`桌面自動化節點「${emptyCu.name}」尚未錄製動作，請開啟節點面板點「開始錄製」`)
+      return
+    }
+    // visual_validation 節點若沒填 prompt，明確提示（給 VLM 的判斷條件必填）
+    const emptyVv = steps.find(s => s.visualValidation && !s.vvPrompt?.trim())
+    if (emptyVv) {
+      toast.error(`視覺驗證節點「${emptyVv.name}」尚未填判斷條件（vv_prompt），請點開節點填入`)
       return
     }
     // 查詢 recipe 狀態，然後顯示選擇 dialog
