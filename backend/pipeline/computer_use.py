@@ -340,7 +340,25 @@ def _vlm_call_with_image(messages_text: str, sys_prompt: str,
     try:
         llm = build_llm(temperature=0)
         result = llm.invoke([SystemMessage(content=sys_prompt), HumanMessage(content=user_content)])
-        raw = (getattr(result, "content", None) or "").strip()
+        # 多模態模型（Gemini）回傳 content 是 list[dict]，純文字是 str — 統一抽 text
+        raw_content = getattr(result, "content", None)
+        if raw_content is None:
+            raw = ""
+        elif isinstance(raw_content, str):
+            raw = raw_content
+        elif isinstance(raw_content, list):
+            parts: list[str] = []
+            for block in raw_content:
+                if isinstance(block, dict):
+                    t = block.get("text") or ""
+                    if t:
+                        parts.append(t)
+                elif isinstance(block, str):
+                    parts.append(block)
+            raw = "".join(parts)
+        else:
+            raw = str(raw_content)
+        raw = raw.strip()
     except Exception as e:
         return (False, "", f"LLM 呼叫失敗（請確認 Settings 主模型支援視覺）：{e.__class__.__name__}: {e}")
     if not raw:

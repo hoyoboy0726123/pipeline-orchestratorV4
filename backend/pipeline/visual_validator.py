@@ -26,6 +26,30 @@ IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
 MAX_IMAGES = 6  # 多頁 xlsx / pptx 可能很多張，限制送的張數避免 token 爆掉
 
 
+def _extract_text_from_llm_result(result) -> str:
+    """LLM 回應的 content 在不同 provider 形態不同：
+      - 純文字 LLM（Groq）：result.content 是 string
+      - 多模態 LLM（Gemini, Claude）：result.content 是 list[dict]，每個 block 形如
+        {"type": "text", "text": "..."} 或 {"type": "image_url", ...}
+    把所有 text block 拼起來回 string。對齊 llm_factory.invoke_with_streaming 同樣處理。"""
+    content = getattr(result, "content", None)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                t = block.get("text") or ""
+                if t:
+                    parts.append(t)
+            elif isinstance(block, str):
+                parts.append(block)
+        return "".join(parts)
+    return str(content)
+
+
 def _wsl_to_windows_path(path: str) -> str:
     """LLM / 上一節點若用沙盒輸出路徑（/mnt/c/...），轉回 Windows 路徑。"""
     import re as _re
@@ -160,7 +184,8 @@ async def run_visual_validation(
         result = await asyncio.get_event_loop().run_in_executor(
             None, lambda: llm.invoke([SystemMessage(content=sys_msg), HumanMessage(content=user_content)])
         )
-        raw = (getattr(result, "content", None) or "").strip()
+        # 多模態模型（Gemini）回傳 content 是 list[dict]，純文字模型是 str — 統一抽出 text
+        raw = _extract_text_from_llm_result(result).strip()
     except Exception as e:
         return (False, f"VLM 呼叫失敗（請確認 Settings 主模型支援視覺）：{e.__class__.__name__}: {e}")
 
