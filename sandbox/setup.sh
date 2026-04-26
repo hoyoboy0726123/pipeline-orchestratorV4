@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pipeline Orchestrator V3 — WSL 內的沙盒安裝腳本
+# Pipeline Orchestrator V4 — WSL 內的沙盒安裝腳本
 #
 # 由 setup_sandbox.bat 從 Windows 呼叫進來，在 WSL Ubuntu 內執行。
 # 做三件事：
@@ -25,7 +25,7 @@ for arg in "${@:2}"; do
 done
 if [[ -z "$PROJECT_DIR" ]]; then
     echo "用法：$0 <project_dir_in_wsl> [--rebuild]"
-    echo "範例：$0 /mnt/c/Users/GU605_PR_MZ/pipeline-orchestratorV3"
+    echo "範例：$0 /mnt/c/Users/GU605_PR_MZ/pipeline-orchestratorV4"
     echo "改了 Dockerfile / requirements.txt 要重裝：$0 ... --rebuild"
     exit 1
 fi
