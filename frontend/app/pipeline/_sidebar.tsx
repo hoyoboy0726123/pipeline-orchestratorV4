@@ -8,6 +8,7 @@ import {
 import Link from 'next/link'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
+import rehypeRaw from 'rehype-raw'
 import { useWorkflowStore } from './_store'
 import {
   pipelineChat, createWorkflowApi, exportWorkflowUrl, importWorkflow,
@@ -31,7 +32,14 @@ interface ChatMsg {
 function buildWelcomeMessage(env: EnvPaths): string {
   const root = env.project_root
   const financeDir = env.finance_example_dir  // 例如 ".../test-workflows/finance"
-  const intro = '你好！請告訴我你想自動化的工作流程，我會幫你產生 Pipeline YAML 設定。'
+  const intro = `你好！請告訴我你想自動化的工作流程，我會問你幾個關鍵問題、提一份步驟方案讓你點頭、再產生 Pipeline YAML 設定。
+
+我會用到以下節點（依需要組合）：
+- **腳本節點**：跑你已寫好的 .py / .bat / shell 指令
+- **AI 技能節點**：用自然語言描述任務，LLM 自動寫 Python 跑（可掛 docx / pptx 等 Agent Skill 提升正確率）
+- **人工確認節點**：暫停等你 Telegram 點頭再續跑
+- **視覺驗證節點**：用 VLM 看圖判斷產出符不符合預期
+- 桌面自動化節點：UI 操作（要在畫布錄製動作，AI 沒辦法幫你寫）`
   const pathNote = `📁 **輸出路徑慣例**：所有產出檔會放在 \`ai_output/<工作流名稱>/\` 子資料夾（系統自動解析到 \`${root}\`）。`
 
   // 範例 1：Python 腳本串接（用專案內建的 finance 範例腳本，若存在）
@@ -73,7 +81,52 @@ function buildWelcomeMessage(env: EnvPaths): string {
 第三步（人工確認）：暫停並透過 Telegram 通知我檢查摘要表`
   }
 
-  return [intro, pathNote, ex1, ex2, ex3].join('\n\n')
+  // 用 HTML <details>/<summary> 包每個範例（瀏覽器原生摺疊；ReactMarkdown 開了
+  // rehypeRaw 才會 render 這些 HTML 標籤）。預設收起、點擊展開、不佔螢幕。
+  const wrap = (title: string, body: string) =>
+    `<details><summary><strong>${title}</strong></summary>\n\n${body}\n\n</details>`
+
+  const examples = [
+    wrap('📋 範例 1：Python 腳本串接', ex1),
+    wrap('📋 範例 2：Python 腳本 + AI 技能', ex2),
+    wrap('📋 範例 3：Python + AI + 人工確認', ex3),
+  ]
+  const examplesHeader = '\n\n📋 **範例參考**（點任一行展開查看細節，可直接抄走給我作為起點）：'
+
+  return [intro, pathNote, examplesHeader, ...examples].join('\n\n')
+}
+
+// ── LaTeX → 純文字 / Unicode 清洗 ───────────────────────────────────────────
+// LLM 偶爾會用 LaTeX 數學語法（$\rightarrow$ / $N$），這個聊天 UI 沒裝 KaTeX、
+// ReactMarkdown 會原字顯示一坨 "$\rightarrow$" 很醜。在渲染前用 regex 把常見
+// LaTeX 命令換成 Unicode；沒 cover 的 case 至少把錢字號去掉、字母 / 命令裸露出來、可讀。
+const _LATEX_CMD_TO_UNICODE: Record<string, string> = {
+  rightarrow: '→', leftarrow: '←', Rightarrow: '⇒', Leftarrow: '⇐',
+  to: '→', gets: '←', leftrightarrow: '↔', Leftrightarrow: '⇔',
+  uparrow: '↑', downarrow: '↓', updownarrow: '↕',
+  times: '×', div: '÷', pm: '±', mp: '∓',
+  cdot: '·', cdots: '⋯', ldots: '…', dots: '…',
+  leq: '≤', le: '≤', geq: '≥', ge: '≥', neq: '≠', ne: '≠',
+  approx: '≈', equiv: '≡',
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε',
+  theta: 'θ', lambda: 'λ', mu: 'μ', pi: 'π', sigma: 'σ', tau: 'τ',
+  phi: 'φ', omega: 'ω',
+  infty: '∞', forall: '∀', exists: '∃', in: '∈', notin: '∉',
+  subset: '⊂', supset: '⊃', cup: '∪', cap: '∩',
+  text: '', mathrm: '', mathbf: '', mathit: '',
+}
+
+function cleanLatexInChat(text: string): string {
+  if (!text || (!text.includes('$') && !text.includes('\\'))) return text
+  let out = text.replace(/\$([^\$\n]+?)\$/g, (_m, body: string) => {
+    return body.replace(/\\([a-zA-Z]+)/g, (_full, cmd: string) =>
+      _LATEX_CMD_TO_UNICODE[cmd] !== undefined ? _LATEX_CMD_TO_UNICODE[cmd] : cmd
+    ).trim()
+  })
+  out = out.replace(/\\([a-zA-Z]+)/g, (m, cmd: string) =>
+    _LATEX_CMD_TO_UNICODE[cmd] !== undefined ? _LATEX_CMD_TO_UNICODE[cmd] : m
+  )
+  return out
 }
 
 // ── Countdown Hook ──────────────────────────────────────────────────────────
@@ -305,6 +358,12 @@ export default function Sidebar({ onYamlApply }: SidebarProps) {
 
   // 環境路徑（用來動態組 welcome message）— 跨多個 effect 共用
   const [envPaths, setEnvPaths] = useState<EnvPaths | null>(null)
+  // 「新話題」後暫時解綁工作流：下次發訊息不帶 workflow_id（AI 看不到當前 yaml/canvas）
+  // 解綁狀態會在使用者切換 activeId 時自動清掉、重新綁定
+  const [chatUnbound, setChatUnbound] = useState(false)
+  useEffect(() => {
+    setChatUnbound(false)
+  }, [activeId])
   useEffect(() => {
     getEnvPaths().then(setEnvPaths).catch(() => {/* ignore — 沿用預設訊息 */})
   }, [])
@@ -484,6 +543,17 @@ export default function Sidebar({ onYamlApply }: SidebarProps) {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = '' // 允許重複選同一檔案
+    // 純 YAML：本地解析 → 走 onYamlApply 建新工作流（不經 backend zip 匯入流程）
+    const lower = file.name.toLowerCase()
+    if (lower.endsWith('.yaml') || lower.endsWith('.yml')) {
+      try {
+        const text = await file.text()
+        onYamlApply(text, 'new')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'YAML 讀取失敗')
+      }
+      return
+    }
     try {
       const res = await importWorkflow(file)
       await useWorkflowStore.getState().fetchWorkflows()
@@ -512,9 +582,10 @@ export default function Sidebar({ onYamlApply }: SidebarProps) {
     // 先把 user 訊息落地：有 activeId → backend append；沒有 → localStorage
     persistAppend(userMsg).catch(() => {/* 落地失敗不擋 UI */})
     try {
+      // chatUnbound = true 時不把 workflow_id 送出去 — 後端就不會注入 _workflow_state_block
       const res = await pipelineChat(
         newMsgs.map(m => ({ role: m.role, content: m.content })),
-        activeId ?? undefined,
+        chatUnbound ? undefined : (activeId ?? undefined),
       )
       const assistantMsg: ChatMsg = {
         role: 'assistant',
@@ -559,16 +630,22 @@ export default function Sidebar({ onYamlApply }: SidebarProps) {
     }
   }
 
-  // 清空對話 → 退回到只有 welcome 的狀態
+  // 清空對話 → 退回到只有 welcome 的狀態 + 暫時解綁當前工作流
   const handleClearChat = async () => {
     if (loading) return
-    if (!confirm('清空目前這條工作流的對話紀錄？（只影響對話，不影響畫布與 YAML）')) return
+    if (!confirm(
+      '清空目前對話、開始新話題？\n\n' +
+      '• 畫布與 YAML 不變\n' +
+      '• 對話會暫時與當前工作流解綁（下次訊息 AI 看不到目前 YAML、是真的新話題）\n' +
+      '• 想回到原工作流的討論：從左邊清單切換工作流即可重新綁定'
+    )) return
     const welcome: ChatMsg = {
       role: 'assistant',
       content: envPaths ? buildWelcomeMessage(envPaths)
         : '你好！請告訴我你想自動化的工作流程，我會幫你產生 Pipeline YAML 設定。',
     }
     setMessages([welcome])
+    setChatUnbound(true)
     if (activeId) {
       try { await clearWorkflowChat(activeId) } catch { toast.error('清空失敗') }
     } else {
@@ -676,12 +753,12 @@ export default function Sidebar({ onYamlApply }: SidebarProps) {
         <button
           onClick={() => importRef.current?.click()}
           className="flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-600 rounded-xl text-xs font-medium hover:bg-gray-50 transition-colors"
-          title="匯入工作流 (.zip)"
+          title="匯入工作流（.zip 完整包 或 .yaml/.yml 單純流程）"
         >
           <Upload className="w-3.5 h-3.5" />
           匯入
         </button>
-        <input ref={importRef} type="file" accept=".zip" className="hidden" onChange={handleImport} />
+        <input ref={importRef} type="file" accept=".zip,.yaml,.yml" className="hidden" onChange={handleImport} />
       </div>
 
       {/* ── Workflow List ── */}
@@ -735,7 +812,9 @@ export default function Sidebar({ onYamlApply }: SidebarProps) {
             {/* Sub-toolbar：顯示目前綁定的工作流 + 新話題按鈕 */}
             <div className="flex items-center justify-between px-2.5 py-1.5 bg-gray-50/50 border-b border-gray-100 text-[11px] text-gray-500">
               <span className="truncate">
-                {activeId ? (
+                {chatUnbound ? (
+                  <>🆕 新話題（未綁工作流；切換 / 重選工作流即重新綁定）</>
+                ) : activeId ? (
                   <>💾 對話綁定工作流：<span className="text-gray-700 font-medium">{workflows.find(w => w.id === activeId)?.name || activeId}</span></>
                 ) : (
                   <>📝 暫存模式（未選工作流；建立 / 選取後才會持久保存）</>
@@ -743,7 +822,7 @@ export default function Sidebar({ onYamlApply }: SidebarProps) {
               </span>
               <button
                 onClick={handleClearChat}
-                disabled={loading || isWelcomeOnly(messages)}
+                disabled={loading}
                 className="shrink-0 ml-2 px-1.5 py-0.5 rounded text-[11px] text-gray-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 title="清空目前對話，開始新話題"
               >
@@ -766,7 +845,7 @@ export default function Sidebar({ onYamlApply }: SidebarProps) {
                   }`} style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
                     {msg.role === 'assistant' ? (
                       <div className="prose prose-xs max-w-none prose-p:my-0.5 prose-pre:text-xs prose-pre:whitespace-pre-wrap prose-code:break-all">
-                        <ReactMarkdown>{msg.content.replace(/YAML_READY\n```yaml[\s\S]*?```/g, '（已偵測到 YAML ↓）')}</ReactMarkdown>
+                        <ReactMarkdown rehypePlugins={[rehypeRaw]}>{cleanLatexInChat(msg.content.replace(/YAML_READY\n```yaml[\s\S]*?```/g, '（已偵測到 YAML ↓）'))}</ReactMarkdown>
                       </div>
                     ) : (
                       <span className="whitespace-pre-wrap">{msg.content}</span>
