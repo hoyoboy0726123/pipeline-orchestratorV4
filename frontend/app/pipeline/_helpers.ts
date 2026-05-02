@@ -18,6 +18,7 @@ export interface StepData extends Record<string, unknown> {
   humanConfirmNotifyTelegram?: boolean  // optional — 是否 Telegram 通知
   humanConfirmScreenshot?: boolean     // optional — 是否自動截圖
   humanConfirmPreview?: boolean        // optional — 是否 render 上一步驟輸出檔案預覽
+  humanConfirmSendPrevOutput?: boolean // optional — 抵達節點時自動把上一步輸出檔當 document 傳到 TG
   // 桌面自動化節點（computer_use）
   computerUse?: boolean                  // optional — 桌面自動化步驟
   computerUseActions?: ComputerUseAction[]  // optional — 動作序列
@@ -75,6 +76,7 @@ export interface HumanConfirmData extends Record<string, unknown> {
   notifyTelegram: boolean  // 是否透過 Telegram 通知
   screenshot: boolean      // 是否自動截圖並傳送到 Telegram
   previewPrevOutput: boolean  // 是否 render 上一步驟輸出檔案成 PNG 傳 TG
+  sendPrevOutput: boolean  // 是否自動把上一步輸出檔當 document 傳到 TG（手機可下載）
   timeout: number          // 等待超時（秒）
   index: number
   status: 'idle' | 'running' | 'success' | 'failed'
@@ -206,6 +208,7 @@ export function newHumanConfirmData(index = 0): HumanConfirmData {
     notifyTelegram: true,
     screenshot: false,
     previewPrevOutput: false,
+    sendPrevOutput: false,
     timeout: 3600,
     index,
     status: 'idle',
@@ -334,6 +337,7 @@ export function stepsToFlow(steps: StepData[]): { nodes: AppNode[]; edges: Edge[
           notifyTelegram: s.humanConfirmNotifyTelegram ?? true,
           screenshot: s.humanConfirmScreenshot ?? false,
           previewPrevOutput: s.humanConfirmPreview ?? false,
+          sendPrevOutput: s.humanConfirmSendPrevOutput ?? false,
           timeout: s.timeout || 3600,
           index: i,
           status: 'idle' as const,
@@ -433,21 +437,37 @@ export function flowToSteps(nodes: AppNode[], edges: Edge[]): StepData[] {
   const starts = execNodes.filter(n => !hasIncoming.has(n.id))
   if (!starts.length) return []
 
-  // 沿邊走，只收集有連接的節點
-  const adj = new Map<string, string>()
-  virtualEdges.forEach(e => adj.set(e.source, e.target))
-
+  // 沿邊走、收集有連接的節點。
+  // 之前用 Map<source,target>（單一 target）→ 同 source 多條出邊只保留最後一條、
+  // 後寫覆蓋前寫；使用者「插入中間節點忘記刪舊邊」會看運氣決定走不走中間節點，
+  // 而且中間節點會被當「孤立節點」靜默丟掉（user 收不到任何警告）。
+  // 改成 multimap + DFS 找最長路徑：插入新節點即使保留舊邊、新路徑也會被選中。
+  const adjMulti = new Map<string, string[]>()
+  for (const e of virtualEdges) {
+    if (!adjMulti.has(e.source)) adjMulti.set(e.source, [])
+    adjMulti.get(e.source)!.push(e.target)
+  }
+  // DFS 找最長路徑；visited 防 cycle、子探索用 set copy 不互相污染
+  const longestFrom = (node: string, visited: Set<string>): string[] => {
+    if (visited.has(node)) return []
+    const next = new Set(visited); next.add(node)
+    const targets = adjMulti.get(node) || []
+    if (targets.length === 0) return [node]
+    let best: string[] = []
+    for (const t of targets) {
+      const sub = longestFrom(t, next)
+      if (sub.length > best.length) best = sub
+    }
+    return [node, ...best]
+  }
+  const orderIds = longestFrom(starts[0].id, new Set<string>())
   const ordered: AppNode[] = []
-  const visited = new Set<string>()
-  let cur: string | undefined = starts[0].id
-  while (cur && !visited.has(cur)) {
-    visited.add(cur)
-    const node = execNodes.find(n => n.id === cur)
+  for (const id of orderIds) {
+    const node = execNodes.find(n => n.id === id)
     if (node) ordered.push(node)
-    cur = adj.get(cur)
   }
 
-  // 孤立節點不加入（邊驅動執行）
+  // 孤立節點不加入（邊驅動執行；DFS 已偏好最長路徑、避免中間節點被丟掉）
 
   return ordered.map((n, i) => {
     const aiData = aiDataByPredecessor.get(n.id)
@@ -512,6 +532,7 @@ export function flowToSteps(nodes: AppNode[], edges: Edge[]): StepData[] {
         humanConfirmNotifyTelegram: d.notifyTelegram,
         humanConfirmScreenshot: d.screenshot,
         humanConfirmPreview: d.previewPrevOutput,
+        humanConfirmSendPrevOutput: d.sendPrevOutput,
         timeout: d.timeout,
         retry: 0,
         index: i,
@@ -575,6 +596,7 @@ export function stepsToYaml(name: string, steps: StepData[]): string {
       if (s.humanConfirmNotifyTelegram === false) lines.push(`    notify_telegram: false`)
       if (s.humanConfirmScreenshot) lines.push(`    screenshot: true`)
       if (s.humanConfirmPreview) lines.push(`    preview_prev_output: true`)
+      if (s.humanConfirmSendPrevOutput) lines.push(`    send_prev_output: true`)
       if (s.timeout && s.timeout !== 3600) lines.push(`    timeout: ${s.timeout}`)
       continue
     }
@@ -765,6 +787,8 @@ export function parseYaml(raw: string): { name: string; validate: boolean; steps
         cur.humanConfirmScreenshot = /true/.test(t)
       } else if (/^preview_prev_output:/.test(t) && cur) {
         cur.humanConfirmPreview = /true/.test(t)
+      } else if (/^send_prev_output:/.test(t) && cur) {
+        cur.humanConfirmSendPrevOutput = /true/.test(t)
       } else if (/^visual_validation:/.test(t) && cur) {
         cur.visualValidation = /true/.test(t)
       } else if (/^vv_source:/.test(t) && cur) {
@@ -793,6 +817,9 @@ export function parseYaml(raw: string): { name: string; validate: boolean; steps
       } else if (/^retry:/.test(t) && cur) {
         cur.retry = parseInt(t.replace(/^retry:\s*/, '')) || 0
         inOutput = false
+      } else if (/^(outlook_automation|outlook_template|outlook_params|web_crawler|wc_[a-z_]+|outlook_[a-z_]+):/.test(t) && cur) {
+        // V5-only 節點欄位 — V4 沒這些節點類型；跳過、不要被下面的 catch-all 黏到 batch
+        // 注意：這只是相容性 fallback、避免使用者誤把 V5 YAML 餵進 V4 把 batch 弄爛
       } else if (cur && t && !t.startsWith('-')) {
         // 不匹配任何 key 的行 → 追加到 batch（處理長文字被換行的情況）
         if (cur.batch && !inOutput) {
@@ -823,6 +850,7 @@ function buildStep(partial: Partial<StepData>, index: number): StepData {
     humanConfirmNotifyTelegram: partial.humanConfirmNotifyTelegram ?? true,
     humanConfirmScreenshot: partial.humanConfirmScreenshot ?? false,
     humanConfirmPreview: partial.humanConfirmPreview ?? false,
+    humanConfirmSendPrevOutput: partial.humanConfirmSendPrevOutput ?? false,
     visualValidation: partial.visualValidation ?? false,
     vvSource: partial.vvSource ?? 'prev_output',
     vvPrompt: partial.vvPrompt ?? '',

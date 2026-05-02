@@ -685,26 +685,28 @@ async def get_available_skills():
 
 @app.get("/skills/{skill_name}/dependencies")
 async def scan_skill_deps(skill_name: str):
-    """掃描指定 skill 的 Python / Node.js 依賴。"""
+    """掃描指定 skill 的 Python / Node.js 依賴。
+    pip 已安裝列表跟著當前 sandbox 模式走（host venv 或 sandbox container）；
+    之前寫死 `list_packages()` 永遠看 host、切到容器模式時所有容器套件都顯示「未安裝」。
+    """
     from skill_scanner import scan_skill_dependencies
     result = scan_skill_dependencies(skill_name)
     if not result.get("found"):
         raise HTTPException(status_code=404, detail=f"找不到 skill：{skill_name}")
     # 加上目前已安裝的 pip 套件，前端可對照
-    # list_packages() 回傳 list[dict]，每個 dict 有 {name, installed, version}
-    import re as _re
-    from skill_pkg_manager import list_packages
+    # 走 skill_pkg_manager 的 normalize_pkg_name — 整個 backend 唯一的正規化函式，
+    # 之前這裡有自己一份只做 .lower() 的弱化版、會把 `lxml_html_clean` 跟
+    # `lxml-html-clean` 視為不同套件、UI 顯示「未安裝」是假警報
+    from skill_pkg_manager import list_packages_by_target, normalize_pkg_name
 
-    def _base_name(pkg: str) -> str:
-        # 去掉版本指定與 extras：`markitdown[pptx]>=1.0` → `markitdown`
-        return _re.split(r"[<>=!~\[]", pkg)[0].strip().lower()
-
-    # 兩邊都 normalize 成 base name 再比對
-    installed_bases = {_base_name(p["name"]) for p in list_packages() if p.get("installed")}
+    # 用 target=auto 自動跟著 settings.skill_sandbox_mode（host 或 sandbox）走
+    pkg_resp = list_packages_by_target("auto")
+    pkg_list = pkg_resp.get("packages") or []
+    installed_bases = {normalize_pkg_name(p["name"]) for p in pkg_list if p.get("installed")}
     suggested = result["python"]["suggested_pip"]
 
-    result["python"]["installed"] = sorted(s for s in suggested if _base_name(s) in installed_bases)
-    result["python"]["missing"] = [s for s in suggested if _base_name(s) not in installed_bases]
+    result["python"]["installed"] = sorted(s for s in suggested if normalize_pkg_name(s) in installed_bases)
+    result["python"]["missing"] = [s for s in suggested if normalize_pkg_name(s) not in installed_bases]
 
     # npm 套件也做已安裝對比（跑 `npm list -g`）
     from skill_scanner import list_global_npm_packages
@@ -829,13 +831,29 @@ class SandboxModeRequest(BaseModel):
 
 @app.put("/settings/sandbox")
 async def put_sandbox_mode(req: SandboxModeRequest):
-    """切換沙盒模式。切到 wsl_docker 時順便回傳目前健康狀態。"""
+    """切換沙盒模式。切到 wsl_docker 時順便回傳目前健康狀態。
+    切換時 invalidate 三個快取（host pip / sandbox pip / npm globals），
+    讓前端下次 refetch 拿到正確 mode 的資料、不要顯示前一個 mode 的殘留。
+    """
     from settings import set_skill_sandbox_mode
     from pipeline import sandbox as _sandbox
     try:
         updated = set_skill_sandbox_mode(req.mode)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # 清快取：mode 變了之後、所有「跟 mode 連動」的查詢都該重抓
+    try:
+        from skill_pkg_manager import _invalidate_pip_cache, _invalidate_sandbox_pip_cache
+        _invalidate_pip_cache()
+        _invalidate_sandbox_pip_cache()
+    except Exception:
+        pass
+    try:
+        from skill_scanner import _NPM_CACHE
+        _NPM_CACHE["ts"] = 0.0
+        _NPM_CACHE["data"] = set()
+    except Exception:
+        pass
     status = _sandbox.check_status(force_refresh=True)
     return {"mode": updated.get("skill_sandbox_mode", "host"), **status}
 

@@ -158,6 +158,9 @@ class PipelineStep(BaseModel):
     # 後備：若 B1 失敗且 host 裝了 libreoffice，用 libreoffice --headless 轉 PDF 再 render
     preview_prev_output: bool = False
     preview_timeout: int = 30    # 暫時保留欄位（libreoffice 轉檔超時秒數）
+    # 人工確認節點：抵達時自動把上一步的輸出檔案傳到 Telegram（手機可下載）
+    # False（預設）= 不自動傳；但 inline keyboard 仍有「📎 上一步輸出」按鈕、需要時點來抓
+    send_prev_output: bool = False
     # ── 桌面自動化節點（computer_use）────────────────────────────────
     # 此為獨立第 4 種節點，不與 skill / script / human_confirm 混用。
     # 當 computer_use=True 時，runner 走桌面自動化引擎（pyautogui + cv2 比對），
